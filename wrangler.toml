@@ -5,10 +5,4 @@ compatibility_date = "2026-06-13"
 [[d1_databases]]
 binding = "DB"
 database_name = "pixoris-db"
-database_id = "YOUR_D1_DATABASE_ID"
-
-[vars]
-JWT_SECRET = "pixoris-secret-key-change-in-production"
-GITHUB_TOKEN = "YOUR_GITHUB_PAT_TOKEN"
-GITHUB_REPO = "ILIV007/Pixoris"
-GITHUB_BRANCH = "main"
+database_id = "ff53d366-431d-4552-b88d-e763ed1ee6bd"
