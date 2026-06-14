@@ -1,5 +1,66 @@
-// Pixoris CMS Worker API v2.0
+// Pixoris CMS Worker API v2.1 — Production Ready
+// Fixes: Secure JWT (Web Crypto HMAC-SHA256), password hashing, Products API, synced schema
 import { Router } from './router.js';
+
+const encoder = new TextEncoder();
+
+// ============ CRYPTO HELPERS ============
+const base64UrlEncode = (buffer) => {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+};
+
+const base64UrlDecode = (base64Url) => {
+  const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/') + padding;
+  const raw = atob(base64);
+  const buffer = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buffer[i] = raw.charCodeAt(i);
+  return buffer.buffer;
+};
+
+const importHmacKey = async (secret) => {
+  return crypto.subtle.importKey(
+    'raw', encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign', 'verify']
+  );
+};
+
+const hashPassword = async (password, salt) => {
+  const data = encoder.encode(password + salt);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64UrlEncode(hash);
+};
+
+const signJWT = async (payload, secret) => {
+  const header = base64UrlEncode(encoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
+  const body = base64UrlEncode(encoder.encode(JSON.stringify({
+    ...payload,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 86400
+  })));
+  const key = await importHmacKey(secret);
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(`${header}.${body}`));
+  return `${header}.${body}.${base64UrlEncode(signature)}`;
+};
+
+const verifyJWT = async (token, secret) => {
+  try {
+    const [header, body, signature] = token.split('.');
+    if (!header || !body || !signature) return null;
+    const key = await importHmacKey(secret);
+    const valid = await crypto.subtle.verify(
+      'HMAC', key,
+      base64UrlDecode(signature),
+      encoder.encode(`${header}.${body}`)
+    );
+    if (!valid) return null;
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body)));
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch { return null; }
+};
 
 const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
@@ -13,32 +74,10 @@ const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), 
 
 const errorResponse = (message, status = 400) => jsonResponse({ success: false, error: message }, status);
 
-const encodeBase64 = (str) => btoa(str);
-const decodeBase64 = (str) => atob(str);
-
-const signJWT = (payload, secret) => {
-  const header = encodeBase64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const body = encodeBase64(JSON.stringify({ ...payload, exp: Date.now() + 86400000 }));
-  const signature = encodeBase64(header + '.' + body + secret);
-  return `${header}.${body}.${signature}`;
-};
-
-const verifyJWT = (token, secret) => {
-  try {
-    const [header, body, signature] = token.split('.');
-    if (!header || !body || !signature) return null;
-    const expected = encodeBase64(header + '.' + body + secret);
-    if (signature !== expected) return null;
-    const payload = JSON.parse(decodeBase64(body));
-    if (payload.exp < Date.now()) return null;
-    return payload;
-  } catch { return null; }
-};
-
-const getAuth = (request) => {
+const getAuth = async (request, secret) => {
   const auth = request.headers.get('Authorization');
   if (!auth || !auth.startsWith('Bearer ')) return null;
-  return verifyJWT(auth.slice(7), JWT_SECRET);
+  return verifyJWT(auth.slice(7), secret);
 };
 
 const uploadToGitHub = async (filename, base64Content, token, repo, branch) => {
@@ -62,7 +101,8 @@ const uploadToGitHub = async (filename, base64Content, token, repo, branch) => {
 
 const router = new Router();
 
-router.get('/api/health', () => jsonResponse({ status: 'ok', version: '2.0' }));
+// ============ PUBLIC ROUTES ============
+router.get('/api/health', () => jsonResponse({ status: 'ok', version: '2.1' }));
 
 router.get('/api/posts', async (request, env) => {
   const { searchParams } = new URL(request.url);
@@ -107,24 +147,57 @@ router.get('/api/search', async (request, env) => {
   return jsonResponse({ success: true, posts: results || [] });
 });
 
+// ============ PRODUCTS API ============
+router.get('/api/products', async (request, env) => {
+  const { results } = await env.DB.prepare('SELECT * FROM products WHERE active = 1 ORDER BY sort_order, id').all();
+  return jsonResponse({ success: true, products: results || [] });
+});
+
+router.get('/api/product/:slug', async (request, env) => {
+  const { slug } = request.params;
+  const { results } = await env.DB.prepare('SELECT * FROM products WHERE slug = ? AND active = 1').bind(slug).all();
+  if (!results || results.length === 0) return errorResponse('Product not found', 404);
+  return jsonResponse({ success: true, product: results[0] });
+});
+
+// ============ ADMIN AUTH ============
 router.post('/api/admin/login', async (request, env) => {
   const { username, password } = await request.json();
   if (!username || !password) return errorResponse('Username and password required');
   const { results } = await env.DB.prepare('SELECT * FROM admins WHERE username = ?').bind(username).all();
   if (!results || results.length === 0) return errorResponse('Invalid credentials', 401);
   const admin = results[0];
-  if (admin.password_hash !== password) return errorResponse('Invalid credentials', 401);
-  const token = signJWT({ id: admin.id, username: admin.username, role: admin.role }, JWT_SECRET);
+
+  let passwordValid = false;
+  if (admin.password_hash.startsWith('sha256:')) {
+    const [, salt, hash] = admin.password_hash.split(':');
+    const inputHash = await hashPassword(password, salt);
+    passwordValid = inputHash === hash;
+  } else {
+    passwordValid = admin.password_hash === password;
+  }
+
+  if (!passwordValid) return errorResponse('Invalid credentials', 401);
+
+  // Migrate legacy password to hashed
+  if (!admin.password_hash.startsWith('sha256:')) {
+    const newSalt = crypto.randomUUID();
+    const newHash = await hashPassword(password, newSalt);
+    await env.DB.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').bind(`sha256:${newSalt}:${newHash}`, admin.id).run();
+  }
+
+  const token = await signJWT({ id: admin.id, username: admin.username, role: admin.role }, env.JWT_SECRET);
   return jsonResponse({ success: true, token, admin: { id: admin.id, username: admin.username, role: admin.role } });
 });
 
 const adminAuth = (handler) => async (request, env) => {
-  const auth = getAuth(request);
+  const auth = await getAuth(request, env.JWT_SECRET);
   if (!auth) return errorResponse('Unauthorized', 401);
   request.admin = auth;
   return handler(request, env);
 };
 
+// ============ ADMIN POSTS ============
 router.get('/api/admin/posts', adminAuth(async (request, env) => {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status');
@@ -196,6 +269,7 @@ router.delete('/api/admin/post/:id', adminAuth(async (request, env) => {
   return jsonResponse({ success: true, message: 'Post deleted successfully' });
 }));
 
+// ============ ADMIN CATEGORIES ============
 router.get('/api/admin/categories', adminAuth(async (request, env) => {
   const { results } = await env.DB.prepare('SELECT * FROM categories ORDER BY sort_order, id').all();
   return jsonResponse({ success: true, categories: results || [] });
@@ -221,15 +295,44 @@ router.delete('/api/admin/category/:id', adminAuth(async (request, env) => {
   return jsonResponse({ success: true });
 }));
 
+// ============ ADMIN PRODUCTS ============
+router.get('/api/admin/products', adminAuth(async (request, env) => {
+  const { results } = await env.DB.prepare('SELECT * FROM products ORDER BY sort_order, id').all();
+  return jsonResponse({ success: true, products: results || [] });
+}));
+
+router.post('/api/admin/product', adminAuth(async (request, env) => {
+  const { title, slug, description, price, image_url, category, featured, active, sort_order } = await request.json();
+  if (!title || !slug) return errorResponse('Title and slug required');
+  const result = await env.DB.prepare('INSERT INTO products (title, slug, description, price, image_url, category, featured, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(title, slug, description || '', price || 0, image_url || '', category || '', featured ? 1 : 0, active ? 1 : 1, sort_order || 0).run();
+  return jsonResponse({ success: true, id: result.meta?.last_row_id });
+}));
+
+router.put('/api/admin/product/:id', adminAuth(async (request, env) => {
+  const { id } = request.params;
+  const { title, slug, description, price, image_url, category, featured, active, sort_order } = await request.json();
+  await env.DB.prepare('UPDATE products SET title = ?, slug = ?, description = ?, price = ?, image_url = ?, category = ?, featured = ?, active = ?, sort_order = ? WHERE id = ?').bind(title, slug, description, price, image_url, category, featured ? 1 : 0, active ? 1 : 1, sort_order || 0, id).run();
+  return jsonResponse({ success: true });
+}));
+
+router.delete('/api/admin/product/:id', adminAuth(async (request, env) => {
+  const { id } = request.params;
+  await env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
+  return jsonResponse({ success: true });
+}));
+
+// ============ ADMIN STATS ============
 router.get('/api/admin/stats', adminAuth(async (request, env) => {
   const postsCount = await env.DB.prepare('SELECT COUNT(*) as count FROM posts').first();
   const publishedCount = await env.DB.prepare('SELECT COUNT(*) as count FROM posts WHERE published = 1').first();
   const draftCount = await env.DB.prepare('SELECT COUNT(*) as count FROM posts WHERE published = 0').first();
   const categoriesCount = await env.DB.prepare('SELECT COUNT(*) as count FROM categories').first();
+  const productsCount = await env.DB.prepare('SELECT COUNT(*) as count FROM products').first();
   const totalViews = await env.DB.prepare('SELECT SUM(views) as count FROM posts').first();
-  return jsonResponse({ success: true, stats: { totalPosts: postsCount?.count || 0, published: publishedCount?.count || 0, drafts: draftCount?.count || 0, categories: categoriesCount?.count || 0, totalViews: totalViews?.count || 0 } });
+  return jsonResponse({ success: true, stats: { totalPosts: postsCount?.count || 0, published: publishedCount?.count || 0, drafts: draftCount?.count || 0, categories: categoriesCount?.count || 0, products: productsCount?.count || 0, totalViews: totalViews?.count || 0 } });
 }));
 
+// ============ ADMIN MEDIA ============
 router.post('/api/admin/upload', adminAuth(async (request, env) => {
   const formData = await request.formData();
   const file = formData.get('file');
@@ -238,7 +341,7 @@ router.post('/api/admin/upload', adminAuth(async (request, env) => {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
   const filename = `${Date.now()}-${file.name.replace(/\s+/g, '-')}`;
   try {
-    const url = await uploadToGitHub(filename, base64, GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH);
+    const url = await uploadToGitHub(filename, base64, env.GITHUB_TOKEN, env.GITHUB_REPO, env.GITHUB_BRANCH);
     await env.DB.prepare('INSERT INTO media (filename, url, size, mime_type) VALUES (?, ?, ?, ?)').bind(filename, url, bytes.byteLength, file.type).run();
     return jsonResponse({ success: true, url, filename });
   } catch (err) { return errorResponse(err.message, 500); }
@@ -249,14 +352,11 @@ router.get('/api/admin/media', adminAuth(async (request, env) => {
   return jsonResponse({ success: true, media: results || [] });
 }));
 
+// ============ CATCH ALL ============
 router.all('*', () => jsonResponse({ error: 'Not Found' }, 404));
 
 export default {
   async fetch(request, env, ctx) {
-    globalThis.JWT_SECRET = env.JWT_SECRET || 'pixoris-default-secret';
-    globalThis.GITHUB_TOKEN = env.GITHUB_TOKEN;
-    globalThis.GITHUB_REPO = env.GITHUB_REPO || 'ILIV007/Pixoris';
-    globalThis.GITHUB_BRANCH = env.GITHUB_BRANCH || 'main';
     return router.handle(request, env);
   }
 };
