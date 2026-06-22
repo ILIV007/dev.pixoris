@@ -1,0 +1,16 @@
+{
+  "name": "pixoris-api",
+  "version": "2.2.0",
+  "description": "Pixoris CMS Worker API v2.2",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute pixoris-db --file=./schema.sql --remote",
+    "db:migrate:local": "wrangler d1 execute pixoris-db --file=./schema.sql --local"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

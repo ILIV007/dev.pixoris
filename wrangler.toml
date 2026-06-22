@@ -2,7 +2,18 @@ name = "pixoris-api"
 main = "src/index.js"
 compatibility_date = "2026-06-13"
 
+# D1 Database binding
 [[d1_databases]]
 binding = "DB"
 database_name = "pixoris-db"
 database_id = "ff53d366-431d-4552-b88d-e763ed1ee6bd"
+
+# ===== REQUIRED SECRETS (configure via: wrangler secret put NAME) =====
+# JWT_SECRET          — Random string for JWT signing (min 32 chars)
+# GITHUB_TOKEN        — GitHub PAT with repo:write scope (for media uploads)
+# GITHUB_REPO         — e.g. "ILIV007/Pixoris"
+# GITHUB_BRANCH       — e.g. "main"
+#
+# ===== OPTIONAL SECRETS (for future R2 support) =====
+# R2_BUCKET           — R2 bucket name (when migrating from GitHub storage)
+# R2_ACCOUNT_ID       — Cloudflare account ID
