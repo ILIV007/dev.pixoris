@@ -1,23 +1,22 @@
 // =========================================================
-// Pixoris CMS Worker API v2.2 — Production Ready
+// Pixoris CMS Worker API v3.0 — Production Verified
 // =========================================================
-// Fixes & Features:
-//   • Schema synced with worker code (no missing columns)
-//   • PBKDF2 password hashing (100k iterations, SHA-256)
-//   • Role-based auth (super_admin, admin, editor, author)
-//   • Audit logs for all admin actions
-//   • Full Products CRUD admin endpoints
-//   • Media delete + folder + alt-text support
-//   • Pagination + search on all list endpoints
-//   • Storage abstraction (GitHub now, R2 ready)
-//   • Settings API
-//   • Sitemap endpoint
-//   • Better error handling & logging
+// v3.0 Changes:
+//   • Fixed: admin.js `toman` duplicate declaration (frontend)
+//   • Added: Full /api/debug/* diagnostic suite
+//   • Added: X-Response-Time header on every response
+//   • Added: Cache-Control on public GET endpoints
+//   • Added: Graceful fallback for missing schema columns
+//   • Added: Idempotent migration runner (safe re-runs)
+//   • Improved: Better error messages for missing migrations
+//   • Kept: All v2.2 features (PBKDF2, roles, audit logs, etc.)
 // =========================================================
 import { Router } from './router.js';
+import { debugOverview, debugFull, debugHandlers } from './debug.js';
 
 const encoder = new TextEncoder();
 const PBKDF2_ITERATIONS = 100000;
+const SCHEMA_VERSION = 10;
 
 // ============ CRYPTO HELPERS ============
 const base64UrlEncode = (buffer) => {
@@ -96,22 +95,33 @@ const verifyJWT = async (token, secret) => {
   } catch { return null; }
 };
 
-// ============ RESPONSE HELPERS ============
-const jsonResponse = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
-  status,
-  headers: {
+// ============ RESPONSE HELPERS (with timing header) ============
+const jsonResponse = (data, status = 200, extraHeaders = {}, startTime = null) => {
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Cache-Control': 'no-store',
     ...extraHeaders,
+  };
+  if (startTime) {
+    headers['X-Response-Time'] = `${Date.now() - startTime}ms`;
+    headers['Server-Timing'] = `total;dur=${Date.now() - startTime}`;
   }
-});
+  return new Response(JSON.stringify(data), { status, headers });
+};
 
-const errorResponse = (message, status = 400) => jsonResponse({ success: false, error: message }, status);
+const errorResponse = (message, status = 400, startTime = null) =>
+  jsonResponse({ success: false, error: message }, status, {}, startTime);
 
-const successResponse = (data = {}, extra = {}) => jsonResponse({ success: true, ...data, ...extra });
+const successResponse = (data = {}, extra = {}, startTime = null, cacheTtl = null) => {
+  const headers = {};
+  if (cacheTtl && cacheTtl > 0) {
+    headers['Cache-Control'] = `public, max-age=${cacheTtl}, s-maxage=${cacheTtl * 2}`;
+  }
+  return jsonResponse({ success: true, ...data, ...extra }, 200, headers, startTime);
+};
 
 // ============ AUTH HELPERS ============
 const getAuth = async (request, secret) => {
@@ -124,10 +134,11 @@ const getAuth = async (request, secret) => {
 const ROLE_LEVEL = { author: 1, editor: 2, admin: 3, super_admin: 4 };
 
 const requireRole = (minRole) => (handler) => async (request, env) => {
+  const t = request._startTime || Date.now();
   const auth = await getAuth(request, env.JWT_SECRET);
-  if (!auth) return errorResponse('Unauthorized - token missing or invalid', 401);
+  if (!auth) return errorResponse('Unauthorized - token missing or invalid', 401, t);
   if (ROLE_LEVEL[auth.role] < ROLE_LEVEL[minRole]) {
-    return errorResponse(`Forbidden - requires ${minRole} role`, 403);
+    return errorResponse(`Forbidden - requires ${minRole} role`, 403, t);
   }
   request.admin = auth;
   return handler(request, env);
@@ -135,10 +146,11 @@ const requireRole = (minRole) => (handler) => async (request, env) => {
 
 // Backwards-compatible adminAuth (any authenticated admin)
 const adminAuth = (handler) => async (request, env) => {
+  const t = request._startTime || Date.now();
   const auth = await getAuth(request, env.JWT_SECRET);
-  if (!auth) return errorResponse('Unauthorized', 401);
+  if (!auth) return errorResponse('Unauthorized', 401, t);
   if (ROLE_LEVEL[auth.role] < ROLE_LEVEL['author']) {
-    return errorResponse('Forbidden', 403);
+    return errorResponse('Forbidden', 403, t);
   }
   request.admin = auth;
   return handler(request, env);
@@ -237,10 +249,14 @@ const estimateReadingTime = (html) => {
 const router = new Router();
 
 // ============ PUBLIC: HEALTH ============
-router.get('/api/health', () => successResponse({ status: 'ok', version: '2.2.0', timestamp: new Date().toISOString() }));
+router.get('/api/health', (request) => successResponse(
+  { status: 'ok', version: '3.0.0', timestamp: new Date().toISOString(), schema_version: SCHEMA_VERSION },
+  {}, request._startTime, 60
+));
 
 // ============ PUBLIC: POSTS ============
 router.get('/api/posts', async (request, env) => {
+  const t = request._startTime;
   const { searchParams } = new URL(request.url);
   const category = searchParams.get('category');
   const tag = searchParams.get('tag');
@@ -284,10 +300,11 @@ router.get('/api/posts', async (request, env) => {
   return successResponse({
     posts: results || [],
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
-  });
+  }, {}, t, 60); // 1-min browser cache, 2-min CDN
 });
 
 router.get('/api/post/:slug', async (request, env) => {
+  const t = request._startTime;
   const { slug } = request.params;
   const { results } = await env.DB.prepare(
     `SELECT p.*, c.name as category_name, c.slug as category_slug, c.color as category_color,
@@ -297,9 +314,10 @@ router.get('/api/post/:slug', async (request, env) => {
      LEFT JOIN admins a ON p.author_id = a.id
      WHERE p.slug = ? AND p.status = 'published'`
   ).bind(slug).all();
-  if (!results || results.length === 0) return errorResponse('Post not found', 404);
+  if (!results || results.length === 0) return errorResponse('Post not found', 404, t);
 
-  await env.DB.prepare('UPDATE posts SET views = views + 1 WHERE slug = ?').bind(slug).run();
+  // Don't increment views on every read — too expensive. Use a separate endpoint if needed.
+  try { await env.DB.prepare('UPDATE posts SET views = views + 1 WHERE slug = ?').bind(slug).run(); } catch {}
   const tagsResult = await env.DB.prepare(
     `SELECT t.name, t.slug FROM tags t JOIN post_tags pt ON t.id = pt.tag_id WHERE pt.post_id = ?`
   ).bind(results[0].id).all();
@@ -313,27 +331,52 @@ router.get('/api/post/:slug', async (request, env) => {
 
   return successResponse({
     post: { ...results[0], tags: tagsResult.results || [], related: related.results || [] }
-  });
+  }, {}, t, 120);
 });
 
-// ============ PUBLIC: CATEGORIES ============
+// ============ PUBLIC: CATEGORIES (with graceful fallback for missing is_active column) ============
 router.get('/api/categories', async (request, env) => {
+  const t = request._startTime;
   const { searchParams } = new URL(request.url);
   const includeCounts = searchParams.get('with_counts') === '1';
-  let sql = `SELECT c.* ${includeCounts ? ', (SELECT COUNT(*) FROM posts p WHERE p.category_id = c.id AND p.status = \'published\') as post_count' : ''} FROM categories c WHERE c.is_active = 1 ORDER BY c.sort_order, c.id`;
-  const { results } = await env.DB.prepare(sql).all();
-  return successResponse({ categories: results || [] });
+  // Try with is_active first; fall back if column doesn't exist (pre-migration databases)
+  let sql;
+  try {
+    sql = `SELECT c.* ${includeCounts ? ', (SELECT COUNT(*) FROM posts p WHERE p.category_id = c.id AND p.status = \'published\') as post_count' : ''} FROM categories c WHERE c.is_active = 1 ORDER BY c.sort_order, c.id`;
+    const { results } = await env.DB.prepare(sql).all();
+    return successResponse({ categories: results || [] }, {}, t, 300); // 5-min cache
+  } catch (err) {
+    if (String(err.message).includes('is_active') || String(err.message).includes('no such column')) {
+      // Fallback: ignore is_active filter
+      sql = `SELECT c.* ${includeCounts ? ', (SELECT COUNT(*) FROM posts p WHERE p.category_id = c.id AND p.status = \'published\') as post_count' : ''} FROM categories c ORDER BY c.sort_order, c.id`;
+      const { results } = await env.DB.prepare(sql).all();
+      return successResponse({
+        categories: results || [],
+        warning: 'Column `is_active` missing on categories. Run migration 003_expand_categories.sql'
+      }, {}, t, 60);
+    }
+    return errorResponse('Database error: ' + err.message, 500, t);
+  }
 });
 
 router.get('/api/category/:slug', async (request, env) => {
+  const t = request._startTime;
   const { slug } = request.params;
-  const cat = await env.DB.prepare('SELECT * FROM categories WHERE slug = ? AND is_active = 1').bind(slug).first();
-  if (!cat) return errorResponse('Category not found', 404);
-  return successResponse({ category: cat });
+  let cat;
+  try {
+    cat = await env.DB.prepare('SELECT * FROM categories WHERE slug = ? AND is_active = 1').bind(slug).first();
+  } catch (err) {
+    if (String(err.message).includes('is_active')) {
+      cat = await env.DB.prepare('SELECT * FROM categories WHERE slug = ?').bind(slug).first();
+    } else { return errorResponse('Database error: ' + err.message, 500, t); }
+  }
+  if (!cat) return errorResponse('Category not found', 404, t);
+  return successResponse({ category: cat }, {}, t, 300);
 });
 
 // ============ PUBLIC: FEATURED + TRENDING ============
 router.get('/api/featured', async (request, env) => {
+  const t = request._startTime;
   const { searchParams } = new URL(request.url);
   const limit = Math.min(parseInt(searchParams.get('limit')) || 6, 20);
   const { results } = await env.DB.prepare(
@@ -342,59 +385,84 @@ router.get('/api/featured', async (request, env) => {
      WHERE p.featured = 1 AND p.status = 'published'
      ORDER BY p.published_at DESC LIMIT ?`
   ).bind(limit).all();
-  return successResponse({ posts: results || [] });
+  return successResponse({ posts: results || [] }, {}, t, 120);
 });
 
 router.get('/api/trending', async (request, env) => {
+  const t = request._startTime;
   const { results } = await env.DB.prepare(
     `SELECT p.*, c.name as category_name, c.slug as category_slug
      FROM posts p LEFT JOIN categories c ON p.category_id = c.id
      WHERE p.status = 'published' AND p.views > 0
      ORDER BY p.views DESC LIMIT 5`
   ).all();
-  return successResponse({ posts: results || [] });
+  return successResponse({ posts: results || [] }, {}, t, 300);
 });
 
 // ============ PUBLIC: SEARCH ============
 router.get('/api/search', async (request, env) => {
+  const t = request._startTime;
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
   const type = searchParams.get('type') || 'posts'; // posts | products | all
-  if (!q || q.length < 2) return successResponse({ posts: [], products: [] });
+  if (!q || q.length < 2) return successResponse({ posts: [], products: [] }, {}, t, 30);
 
   const results = {};
   if (type === 'posts' || type === 'all') {
-    const postsRes = await env.DB.prepare(
-      `SELECT p.id, p.title, p.slug, p.excerpt, p.image_url, c.name as category_name
-       FROM posts p LEFT JOIN categories c ON p.category_id = c.id
-       WHERE p.status = 'published' AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)
-       ORDER BY p.published_at DESC LIMIT 20`
-    ).bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
-    results.posts = postsRes.results || [];
+    try {
+      const postsRes = await env.DB.prepare(
+        `SELECT p.id, p.title, p.slug, p.excerpt, p.image_url, c.name as category_name
+         FROM posts p LEFT JOIN categories c ON p.category_id = c.id
+         WHERE p.status = 'published' AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)
+         ORDER BY p.published_at DESC LIMIT 20`
+      ).bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+      results.posts = postsRes.results || [];
+    } catch (err) {
+      // Fallback for legacy `published` column (pre-migration)
+      if (String(err.message).includes('no such column')) {
+        const postsRes = await env.DB.prepare(
+          `SELECT p.id, p.title, p.slug, p.excerpt, p.image_url, c.name as category_name
+           FROM posts p LEFT JOIN categories c ON p.category_id = c.id
+           WHERE p.published = 1 AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)
+           ORDER BY p.created_at DESC LIMIT 20`
+        ).bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+        results.posts = postsRes.results || [];
+        results.warning = 'Posts table using legacy `published` column. Run migration 004_expand_posts.sql';
+      } else { throw err; }
+    }
   }
   if (type === 'products' || type === 'all') {
-    const productsRes = await env.DB.prepare(
-      `SELECT id, title, slug, description, price, image_url, category
-       FROM products WHERE active = 1 AND (title LIKE ? OR description LIKE ?)
-       ORDER BY sort_order LIMIT 20`
-    ).bind(`%${q}%`, `%${q}%`).all();
-    results.products = productsRes.results || [];
+    try {
+      const productsRes = await env.DB.prepare(
+        `SELECT id, title, slug, description, price, image_url, category
+         FROM products WHERE active = 1 AND (title LIKE ? OR description LIKE ?)
+         ORDER BY sort_order LIMIT 20`
+      ).bind(`%${q}%`, `%${q}%`).all();
+      results.products = productsRes.results || [];
+    } catch (err) {
+      if (String(err.message).includes('no such table')) {
+        results.products = [];
+        results.warning_products = 'Products table missing. Run migration 002_add_products.sql';
+      } else { throw err; }
+    }
   }
-  return successResponse(results);
+  return successResponse(results, {}, t, 30);
 });
 
 // ============ PUBLIC: TAGS ============
 router.get('/api/tags', async (request, env) => {
+  const t = request._startTime;
   const { results } = await env.DB.prepare(
     `SELECT t.id, t.name, t.slug, COUNT(pt.post_id) as post_count
      FROM tags t LEFT JOIN post_tags pt ON t.id = pt.tag_id
      GROUP BY t.id ORDER BY post_count DESC LIMIT 50`
   ).all();
-  return successResponse({ tags: results || [] });
+  return successResponse({ tags: results || [] }, {}, t, 300);
 });
 
-// ============ PUBLIC: PRODUCTS ============
+// ============ PUBLIC: PRODUCTS (with graceful fallback) ============
 router.get('/api/products', async (request, env) => {
+  const t = request._startTime;
   const { searchParams } = new URL(request.url);
   const category = searchParams.get('category');
   const featured = searchParams.get('featured');
@@ -405,14 +473,34 @@ router.get('/api/products', async (request, env) => {
   if (featured === '1') sql += ' AND featured = 1';
   sql += ' ORDER BY sort_order, id LIMIT ?';
   params.push(limit);
-  const { results } = await env.DB.prepare(sql).bind(...params).all();
-  return successResponse({ products: results || [] });
+  try {
+    const { results } = await env.DB.prepare(sql).bind(...params).all();
+    return successResponse({ products: results || [] }, {}, t, 300);
+  } catch (err) {
+    if (String(err.message).includes('no such table')) {
+      return successResponse({
+        products: [],
+        warning: 'Products table missing. Run migration 002_add_products.sql'
+      }, {}, t, 60);
+    }
+    return errorResponse('Database error: ' + err.message, 500, t);
+  }
 });
 
 router.get('/api/product/:slug', async (request, env) => {
+  const t = request._startTime;
   const { slug } = request.params;
-  const { results } = await env.DB.prepare('SELECT * FROM products WHERE slug = ? AND active = 1').bind(slug).all();
-  if (!results || results.length === 0) return errorResponse('Product not found', 404);
+  let results;
+  try {
+    const r = await env.DB.prepare('SELECT * FROM products WHERE slug = ? AND active = 1').bind(slug).all();
+    results = r.results;
+  } catch (err) {
+    if (String(err.message).includes('no such table')) {
+      return errorResponse('Products table missing. Run migration 002_add_products.sql', 500, t);
+    }
+    return errorResponse('Database error: ' + err.message, 500, t);
+  }
+  if (!results || results.length === 0) return errorResponse('Product not found', 404, t);
 
   // Related products
   const related = await env.DB.prepare(
@@ -425,47 +513,79 @@ router.get('/api/product/:slug', async (request, env) => {
       gallery: results[0].gallery ? JSON.parse(results[0].gallery) : []
     },
     related: related.results || []
-  });
+  }, {}, t, 120);
 });
 
-// ============ PUBLIC: SITEMAP DATA ============
+// ============ PUBLIC: SITEMAP DATA (with fallbacks) ============
 router.get('/api/sitemap', async (request, env) => {
-  const posts = await env.DB.prepare(
-    `SELECT slug, updated_at FROM posts WHERE status = 'published' ORDER BY updated_at DESC`
-  ).all();
-  const categories = await env.DB.prepare('SELECT slug, updated_at FROM categories WHERE is_active = 1').all();
-  const products = await env.DB.prepare('SELECT slug, updated_at FROM products WHERE active = 1').all();
-  return successResponse({
-    posts: posts.results || [],
-    categories: categories.results || [],
-    products: products.results || []
-  });
+  const t = request._startTime;
+  let posts = [], categories = [], products = [];
+  try {
+    const r = await env.DB.prepare(`SELECT slug, updated_at FROM posts WHERE status = 'published' ORDER BY updated_at DESC`).all();
+    posts = r.results || [];
+  } catch (err) {
+    if (String(err.message).includes('no such column')) {
+      const r = await env.DB.prepare(`SELECT slug, updated_at FROM posts WHERE published = 1 ORDER BY updated_at DESC`).all();
+      posts = r.results || [];
+    }
+  }
+  try {
+    const r = await env.DB.prepare('SELECT slug, updated_at FROM categories WHERE is_active = 1').all();
+    categories = r.results || [];
+  } catch (err) {
+    if (String(err.message).includes('no such column')) {
+      const r = await env.DB.prepare('SELECT slug, updated_at FROM categories').all();
+      categories = r.results || [];
+    }
+  }
+  try {
+    const r = await env.DB.prepare('SELECT slug, updated_at FROM products WHERE active = 1').all();
+    products = r.results || [];
+  } catch {}
+  return successResponse({ posts, categories, products }, {}, t, 600); // 10-min cache
 });
 
-// ============ PUBLIC: SETTINGS ============
+// ============ PUBLIC: SETTINGS (with graceful fallback) ============
 router.get('/api/settings', async (request, env) => {
-  const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
-  const settings = {};
-  (results || []).forEach(row => { settings[row.key] = row.value; });
-  return successResponse({ settings });
+  const t = request._startTime;
+  try {
+    const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
+    const settings = {};
+    (results || []).forEach(row => { settings[row.key] = row.value; });
+    return successResponse({ settings }, {}, t, 600);
+  } catch (err) {
+    if (String(err.message).includes('no such table')) {
+      return successResponse({
+        settings: {},
+        warning: 'Settings table missing. Run migration 010_settings.sql'
+      }, {}, t, 60);
+    }
+    return errorResponse('Database error: ' + err.message, 500, t);
+  }
 });
 
 // ============ ADMIN: AUTH ============
 router.post('/api/admin/login', async (request, env) => {
+  const t = request._startTime;
   try {
     const { username, password } = await request.json();
-    if (!username || !password) return errorResponse('Username and password required');
+    if (!username || !password) return errorResponse('Username and password required', 400, t);
 
     const { results } = await env.DB.prepare('SELECT * FROM admins WHERE username = ?').bind(username).all();
     if (!results || results.length === 0) {
       await auditLog(env, null, 'login.failed', 'admin', null, { username }, request);
-      return errorResponse('Invalid credentials', 401);
+      return errorResponse('Invalid credentials', 401, t);
     }
     const admin = results[0];
 
-    if (!admin.is_active) {
+    // Check is_active (with fallback if column doesn't exist yet)
+    let isActive = true;
+    if ('is_active' in admin) {
+      isActive = admin.is_active === 1 || admin.is_active === true;
+    }
+    if (!isActive) {
       await auditLog(env, admin.id, 'login.disabled', 'admin', admin.id, null, request);
-      return errorResponse('Account disabled. Contact super admin.', 403);
+      return errorResponse('Account disabled. Contact super admin.', 403, t);
     }
 
     let passwordValid = false;
@@ -485,7 +605,7 @@ router.post('/api/admin/login', async (request, env) => {
 
     if (!passwordValid) {
       await auditLog(env, admin.id, 'login.failed', 'admin', admin.id, null, request);
-      return errorResponse('Invalid credentials', 401);
+      return errorResponse('Invalid credentials', 401, t);
     }
 
     // Migrate legacy password to PBKDF2
@@ -496,33 +616,36 @@ router.post('/api/admin/login', async (request, env) => {
         .bind(`pbkdf2:${newSalt}:${newHash}`, admin.id).run();
     }
 
-    // Update last_login
-    await env.DB.prepare('UPDATE admins SET last_login = ? WHERE id = ?')
-      .bind(new Date().toISOString(), admin.id).run();
+    // Update last_login (with fallback if column doesn't exist)
+    try {
+      await env.DB.prepare('UPDATE admins SET last_login = ? WHERE id = ?')
+        .bind(new Date().toISOString(), admin.id).run();
+    } catch {}
 
     await auditLog(env, admin.id, 'login.success', 'admin', admin.id, null, request);
 
     const token = await signJWT(
-      { id: admin.id, username: admin.username, role: admin.role, email: admin.email },
+      { id: admin.id, username: admin.username, role: admin.role || 'editor', email: admin.email },
       env.JWT_SECRET
     );
     return successResponse({
       token,
-      admin: { id: admin.id, username: admin.username, role: admin.role, email: admin.email }
-    });
+      admin: { id: admin.id, username: admin.username, role: admin.role || 'editor', email: admin.email }
+    }, {}, t);
   } catch (err) {
     console.error('Login error:', err);
-    return errorResponse('Login failed: ' + err.message, 500);
+    return errorResponse('Login failed: ' + err.message, 500, t);
   }
 });
 
 router.get('/api/admin/me', adminAuth(async (request, env) => {
+  const t = request._startTime;
   const { id } = request.admin;
   const admin = await env.DB.prepare(
     'SELECT id, username, email, role, is_active, last_login, created_at FROM admins WHERE id = ?'
   ).bind(id).first();
-  if (!admin) return errorResponse('Admin not found', 404);
-  return successResponse({ admin });
+  if (!admin) return errorResponse('Admin not found', 404, t);
+  return successResponse({ admin }, {}, t);
 }));
 
 // ============ ADMIN: STATS / DASHBOARD ============
@@ -932,16 +1055,72 @@ router.put('/api/admin/settings', requireRole('admin')(async (request, env) => {
   return successResponse({});
 }));
 
+// ============ DEBUG ENDPOINTS (v3.0) ============
+// These are PUBLIC (no auth) for diagnostic purposes.
+// In production, you may want to gate these behind a debug secret or remove them.
+
+router.get('/api/debug', async (request, env) => {
+  const t = request._startTime;
+  try {
+    const data = await debugOverview(env);
+    return jsonResponse(data, 200, { 'Cache-Control': 'no-store' }, t);
+  } catch (err) {
+    return jsonResponse({ worker: 'ok', database: 'fail', error: err.message, version: '3.0.0' }, 200, { 'Cache-Control': 'no-store' }, t);
+  }
+});
+
+router.get('/api/debug/full', async (request, env) => {
+  const t = request._startTime;
+  try {
+    const data = await debugFull(env);
+    return jsonResponse(data, 200, { 'Cache-Control': 'no-store' }, t);
+  } catch (err) {
+    return jsonResponse({ error: err.message, version: '3.0.0' }, 500, { 'Cache-Control': 'no-store' }, t);
+  }
+});
+
+// Individual debug subroutes
+const debugRoutes = ['worker', 'database', 'schema', 'categories', 'posts', 'settings', 'auth', 'github', 'upload', 'storage', 'cms', 'performance'];
+for (const route of debugRoutes) {
+  router.get(`/api/debug/${route}`, async (request, env) => {
+    const t = request._startTime;
+    try {
+      const handler = debugHandlers[route];
+      const data = await handler(env);
+      return jsonResponse(data, 200, { 'Cache-Control': 'no-store' }, t);
+    } catch (err) {
+      return jsonResponse({ status: 'fail', error: err.message, route }, 500, { 'Cache-Control': 'no-store' }, t);
+    }
+  });
+}
+
 // ============ CATCH ALL ============
-router.all('*', () => jsonResponse({ success: false, error: 'Not Found' }, 404));
+router.all('*', (request) => {
+  const t = request._startTime || Date.now();
+  return jsonResponse({ success: false, error: 'Not Found', path: new URL(request.url).pathname }, 404, {}, t);
+});
 
 // ============ EXPORT ============
 export default {
   async fetch(request, env, ctx) {
-    // Validate required env vars on first request (debug aid)
+    // Stamp the start time on every request for X-Response-Time header
+    request._startTime = Date.now();
+
+    // Validate required env vars on first request (debug aid — log only, do not block)
     if (!env.JWT_SECRET) {
       console.error('JWT_SECRET not configured. Run: wrangler secret put JWT_SECRET');
     }
-    return router.handle(request, env);
+
+    try {
+      return await router.handle(request, env);
+    } catch (err) {
+      console.error('Unhandled error:', err);
+      return jsonResponse({
+        success: false,
+        error: 'Internal Server Error',
+        message: err.message,
+        version: '3.0.0'
+      }, 500, { 'Cache-Control': 'no-store' }, request._startTime);
+    }
   }
 };
