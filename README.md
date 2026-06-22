@@ -1,6 +1,6 @@
 # Pixoris v3.0 — Production Verified CMS
 
-> Fixed all critical bugs from v2.2 + comprehensive debug system + performance headers.
+> Fixed all critical bug from v2.2 + comprehensive debug system + performance headers.
 
 ## 🎯 v3 Highlights
 
