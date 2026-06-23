@@ -220,9 +220,37 @@ const router = new Router();
 
 // ============ PUBLIC: HEALTH ============
 router.get('/api/health', (request) => successResponse(
-  { status: 'ok', version: '3.1.0', timestamp: new Date().toISOString(), schema_version: SCHEMA_VERSION },
+  { status: 'ok', version: '4.3.0', timestamp: new Date().toISOString(), schema_version: SCHEMA_VERSION },
   {}, request._startTime, 60
 ));
+
+// ============ PUBLIC: BOOTSTRAP (API Aggregation - reduces 3 calls to 1) ============
+router.get('/api/bootstrap', withCache(60)(async (request, env) => {
+  const t = request._startTime;
+  try {
+    // Run all queries in parallel
+    const [featured, latest, categories, settings, trending] = await Promise.all([
+      env.DB.prepare(`SELECT p.id, p.title, p.slug, p.excerpt, p.image_url, p.category_id, c.name as category_name, c.color as category_color FROM posts p LEFT JOIN categories c ON p.category_id = c.id WHERE p.featured = 1 AND p.status = 'published' ORDER BY p.published_at DESC LIMIT 3`).all().catch(() => ({ results: [] })),
+      env.DB.prepare(`SELECT p.id, p.title, p.slug, p.excerpt, p.image_url, c.name as category_name, c.color as category_color FROM posts p LEFT JOIN categories c ON p.category_id = c.id WHERE p.status = 'published' ORDER BY p.published_at DESC LIMIT 6`).all().catch(() => ({ results: [] })),
+      env.DB.prepare('SELECT * FROM categories WHERE is_active = 1 ORDER BY sort_order, id').all().catch(() => ({ results: [] })),
+      env.DB.prepare('SELECT key, value FROM settings').all().catch(() => ({ results: [] })),
+      env.DB.prepare(`SELECT p.id, p.title, p.slug, p.views FROM posts p WHERE p.status = 'published' AND p.views > 0 ORDER BY p.views DESC LIMIT 5`).all().catch(() => ({ results: [] })),
+    ]);
+
+    const settingsObj = {};
+    (settings.results || []).forEach(row => { settingsObj[row.key] = row.value; });
+
+    return successResponse({
+      featured: featured.results || [],
+      latest: latest.results || [],
+      categories: categories.results || [],
+      settings: settingsObj,
+      trending: trending.results || [],
+    }, {}, t, 60);
+  } catch (err) {
+    return errorResponse('Bootstrap failed: ' + err.message, 500, t);
+  }
+}));
 
 // ============ PUBLIC: POSTS ============
 router.get('/api/posts', async (request, env) => {
