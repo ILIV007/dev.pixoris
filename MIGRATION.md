@@ -1,173 +1,167 @@
-# Pixoris v4.0 Migration Guide
+# Pixoris v4.1 Migration Guide
 
-## From v3.1 → v4.0
-
-### No Backend Changes
-v4.0 is **frontend-only**. The worker code from v3.1 is unchanged. No database migration needed.
+## From v4.0 → v4.1
 
 ### What's New
-- ✅ Modular CSS (9 files under `css/`)
-- ✅ Modular JS (10 ES modules under `js/`)
-- ✅ Organized asset folders (`decor/`, `svg/`, `logos/`, `audio/`, `uploads/`)
-- ✅ New favicon (`assets/logos/favicon.svg` — pixel Pac-Man)
-- ✅ Improved admin panel UX
-- ✅ In-memory API cache for GET requests
-- ✅ Better responsive design
+- ✅ Admin panel reverted to v3.1 structure (user-preferred)
+- ✅ 2 new super admins: Iliya + Amirali (password: P!xoris2026)
+- ✅ Password show/hide toggle on login forms
+- ✅ Clean favicon (background removed, 5 files generated)
+- ✅ Cloudflare Cache API layer (services/cache.js)
+- ✅ RSS feed endpoint (/rss.xml)
+- ✅ Dynamic sitemap endpoint (/sitemap.xml)
 
 ### Migration Steps
 
-1. **Backup current frontend** (optional — your GitHub history has it)
-   ```bash
-   git clone https://github.com/ILIV007/Pixoris.git pixoris-backup
-   ```
+#### 1. Database Migration (REQUIRED — adds new admins)
 
-2. **Upload new frontend files**
-   - Extract `pixoris-v4.zip`
-   - Replace all files in your `Pixoris` GitHub repo with the contents of `page/`
-   - Important: **delete the old `styles.css`, `script.js`, `admin.js`** at the root level (they're now in `css/` and `js/`)
-   - Cloudflare Pages auto-deploys
-
-3. **Verify deployment**
-   ```bash
-   # Favicon should load
-   curl -I https://pixoris.pages.dev/assets/logos/favicon.svg
-   # Should return 200 OK
-
-   # CSS should load
-   curl -I https://pixoris.pages.dev/css/main.css
-   # Should return 200 OK
-
-   # JS modules should load
-   curl -I https://pixoris.pages.dev/js/script.js
-   # Should return 200 OK
-   ```
-
-4. **Test in browser**
-   - Visit `https://pixoris.pages.dev`
-   - Check browser tab — Pac-Man favicon should appear
-   - Open DevTools → Console — no errors
-   - Open DevTools → Network — all requests return 200
-   - Test admin panel at `/admin.html`
-
-### If You See "404 styles.css"
-
-This means the old HTML is cached. Force-refresh:
-- **Hard reload**: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
-- **Or**: Open DevTools → Network → check "Disable cache" → reload
-- **Or**: Wait 5-10 minutes for Cloudflare Pages cache to expire
-
-### If You See "Module script failed to load"
-
-This usually means the JS file path is wrong. Verify:
-```bash
-# These should all return 200
-curl -I https://pixoris.pages.dev/js/script.js
-curl -I https://pixoris.pages.dev/js/admin.js
-curl -I https://pixoris.pages.dev/js/modules/utils.js
-curl -I https://pixoris.pages.dev/js/modules/api.js
-```
-
-If any return 404, the file wasn't uploaded. Re-check your GitHub repo.
-
-### If Images Don't Load
-
-The asset paths changed:
-- Old: `assets/decor-wanda.png`
-- New: `assets/decor/decor-wanda.png`
-
-All HTML files have been updated, but if you have custom content in your database (e.g., post content with hardcoded `<img src="assets/card-shop.svg">`), those will break.
-
-**Fix**: Run this SQL on your D1 database:
-```sql
-UPDATE posts
-SET content = REPLACE(content, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
-WHERE content LIKE '%assets/card-shop.svg%';
-
-UPDATE posts
-SET content = REPLACE(content, 'assets/card-game.svg', 'assets/svg/card-game.svg')
-WHERE content LIKE '%assets/card-game.svg%';
-
-UPDATE posts
-SET content = REPLACE(content, 'assets/card-cinema.svg', 'assets/svg/card-cinema.svg')
-WHERE content LIKE '%assets/card-cinema.svg%';
-
-UPDATE posts
-SET content = REPLACE(content, 'assets/hero-cinema.svg', 'assets/svg/hero-cinema.svg')
-WHERE content LIKE '%assets/hero-cinema.svg%';
-
-UPDATE posts
-SET content = REPLACE(content, 'assets/hero-gaming.svg', 'assets/svg/hero-gaming.svg')
-WHERE content LIKE '%assets/hero-gaming.svg%';
-
-UPDATE posts
-SET content = REPLACE(content, 'assets/hero-shop.svg', 'assets/svg/hero-shop.svg')
-WHERE content LIKE '%assets/hero-shop.svg%';
-```
-
-Also update product image URLs:
-```sql
-UPDATE products
-SET image_url = REPLACE(image_url, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
-WHERE image_url LIKE '%assets/card-shop.svg%';
-
-UPDATE products
-SET image_url = REPLACE(image_url, 'assets/hero-cinema.svg', 'assets/svg/hero-cinema.svg')
-WHERE image_url LIKE '%assets/hero-cinema.svg%';
-
-UPDATE products
-SET image_url = REPLACE(image_url, 'assets/hero-gaming.svg', 'assets/svg/hero-gaming.svg')
-WHERE image_url LIKE '%assets/hero-gaming.svg%';
-```
-
-And media URLs in the media table:
-```sql
-UPDATE media
-SET url = REPLACE(url, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
-WHERE url LIKE '%assets/card-shop.svg%';
-```
-
-Run via:
 ```bash
 cd worker
-wrangler d1 execute pixoris-db --remote --command="UPDATE posts SET content = REPLACE(content, 'assets/card-shop.svg', 'assets/svg/card-shop.svg') WHERE content LIKE '%assets/card-shop.svg%';"
-# (repeat for each replacement)
+wrangler d1 execute pixoris-db --remote --file=./migrations/012_add_super_admins.sql
 ```
 
-### Rollback to v3.1
+This adds Iliya and Amirali as super_admin users with pre-hashed passwords.
 
-If v4.0 causes issues:
+Verify:
+```bash
+wrangler d1 execute pixoris-db --remote --command="SELECT id, username, role FROM admins;"
+# Should show 3 admins: admin, Iliya, Amirali
+```
 
-1. Revert your GitHub repo to the previous commit
-2. Cloudflare Pages auto-deploys the old version
-3. The worker is unchanged, so no rollback needed there
-4. If you ran the SQL UPDATEs above, you can revert them:
+#### 2. Deploy Worker
+
+```bash
+cd worker
+wrangler deploy
+```
+
+This adds:
+- Cache layer on `/api/categories`, `/api/settings`, `/api/featured`, `/api/trending`
+- New `/rss.xml` endpoint
+- New `/sitemap.xml` endpoint
+
+#### 3. Update Frontend
+
+Upload all files in `page/` to your `Pixoris` GitHub repo. Key changes:
+- `admin.html` — reverted to v3.1 structure (with password toggle + favicon)
+- `admin.js` — reverted to v3.1 logic (as ES module)
+- `login.html` — added password toggle
+- `js/modules/ui.js` — added PasswordToggle module
+- `css/components.css` — added password toggle styles
+- `assets/logos/favicon.*` — new clean favicon files (5 files)
+
+Cloudflare Pages auto-deploys.
+
+### 4. Verify
+
+```bash
+# New endpoints
+curl https://dev.pixoris.workers.dev/rss.xml | head -5
+curl https://dev.pixoris.workers.dev/sitemap.xml | head -5
+
+# Cache layer
+curl -I https://dev.pixoris.workers.dev/api/categories
+# First call: X-Cache-Status: MISS
+curl -I https://dev.pixoris.workers.dev/api/categories
+# Second call: X-Cache-Status: HIT
+
+# New admins
+curl -X POST https://dev.pixoris.workers.dev/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"Iliya","password":"P!xoris2026"}'
+```
+
+## If Admin Panel Looks Wrong
+
+If the admin panel doesn't look like v3.1:
+
+1. **Hard refresh**: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
+2. **Clear cache**: DevTools → Application → Clear storage → Clear site data
+3. **Check console**: Should see no errors
+4. **Verify files uploaded**: 
+   ```bash
+   curl -s https://pixoris.pages.dev/admin.html | grep "data-admin-tab"
+   # Should show 11 tabs
+   ```
+
+## If Login Fails with New Users
+
+If Iliya or Amirali can't login:
+
+1. **Check if migration ran**:
+   ```bash
+   wrangler d1 execute pixoris-db --remote --command="SELECT username, role FROM admins WHERE username IN ('Iliya', 'Amirali');"
+   ```
+   Should return 2 rows.
+
+2. **If empty, re-run migration**:
+   ```bash
+   wrangler d1 execute pixoris-db --remote --file=./migrations/012_add_super_admins.sql
+   ```
+
+3. **Password is case-sensitive**: `P!xoris2026` (capital P, exclamation mark, capital I in Pixoris, no spaces)
+
+4. **Check password hash format**: The hash should start with `pbkdf2:`
+   ```bash
+   wrangler d1 execute pixoris-db --remote --command="SELECT username, substr(password_hash, 1, 10) FROM admins;"
+   ```
+   Iliya and Amirali should show `pbkdf2:xxx` (admin may show `pixoris2026` if not yet logged in).
+
+## If Favicon Doesn't Show
+
+1. **Check file exists**:
+   ```bash
+   curl -I https://pixoris.pages.dev/assets/logos/favicon.svg
+   # Should return 200
+   ```
+
+2. **Clear browser cache**: Browsers cache favicons aggressively
+   - Chrome: `chrome://favicon/` then clear
+   - Firefox: about:config → `browser.chrome.favicons` → reset
+
+3. **Check HTML head**:
+   ```bash
+   curl -s https://pixoris.pages.dev/ | grep favicon
+   # Should show the link tag
+   ```
+
+## If Cache Headers Not Showing
+
+Cloudflare Cache API requires the worker to be deployed. Verify:
+
+```bash
+curl -I https://dev.pixoris.workers.dev/api/categories
+```
+
+Response headers should include:
+```
+X-Cache-Status: MISS   (first call)
+X-Cache-Status: HIT    (second call, within TTL)
+```
+
+If you see no `X-Cache-Status` header, the worker hasn't been deployed yet.
+
+## Rollback to v4.0
+
+If v4.1 causes issues:
+
+1. Revert your GitHub repo (frontend)
+2. Re-deploy v4.0 worker: `wrangler deploy` with old code
+3. The new admins (Iliya, Amirali) will remain in the database — harmless
+4. To remove them:
    ```sql
-   UPDATE posts SET content = REPLACE(content, 'assets/svg/card-shop.svg', 'assets/card-shop.svg');
-   -- etc.
+   DELETE FROM admins WHERE username IN ('Iliya', 'Amirali');
    ```
 
 ## Post-Deploy Verification
 
-- [ ] Favicon shows in browser tab (Pac-Man icon)
-- [ ] Homepage loads without errors
-- [ ] DevTools Console shows no errors
-- [ ] DevTools Network shows all 200s (no 404s)
-- [ ] Admin panel works
-- [ ] Debug Center tab shows all green
-- [ ] Mobile view works (test at 375px width)
-- [ ] Pac Mode toggle works
-- [ ] Music toggle works
-
-## File Mapping (v3.1 → v4.0)
-
-| v3.1 Location | v4.0 Location |
-|---------------|---------------|
-| `styles.css` | `css/main.css` (imports 9 modules) |
-| `script.js` | `js/script.js` (imports 8 modules) |
-| `admin.js` | `js/admin.js` (imports modules) |
-| `assets/decor-*.png` | `assets/decor/decor-*.png` |
-| `assets/card-*.svg` | `assets/svg/card-*.svg` |
-| `assets/hero-*.svg` | `assets/svg/hero-*.svg` |
-| `assets/logo-pixoris-small.png` | `assets/logos/logo-pixoris-small.png` |
-| `assets/background-music.mp3` | `assets/audio/background-music.mp3` |
-| (none) | `assets/logos/favicon.svg` (NEW) |
+- [ ] `admin` can login (password: pixoris2026)
+- [ ] `Iliya` can login (password: P!xoris2026)
+- [ ] `Amirali` can login (password: P!xoris2026)
+- [ ] Password eye toggle works on login forms
+- [ ] Favicon (Pac-Man) shows in browser tab
+- [ ] Admin panel has 11 tabs (Dashboard, Posts, New Post, Categories, Products, Media, Users, Audit, Debug, Settings, Logout)
+- [ ] `/rss.xml` returns valid XML
+- [ ] `/sitemap.xml` returns valid XML
+- [ ] `X-Cache-Status: HIT` on repeat calls to cached endpoints
+- [ ] Debug Center shows all green

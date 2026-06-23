@@ -1,226 +1,181 @@
-# Pixoris v4.0 — UI/UX Overhaul + Frontend Refactor
+# Pixoris v4.1 — Production Hardening + Admin Panel Revert
 
-> **Major frontend refactor**: modular CSS, modular JS (ES modules), organized assets, new favicon, CMS-grade admin panel, and performance improvements.
+> **Reverted admin panel to v3.1 structure** (user-preferred layout) while keeping modular CSS/JS. Added: 2 super admin users, password show/hide toggle, clean favicon, Cloudflare Cache API, RSS feed, dynamic sitemap.
 
-## 🎯 What's New in v4.0
+## 🎯 What's New in v4.1
 
-### 🎨 Frontend Refactor (Major)
-- **Modular CSS**: Split `styles.css` (825 lines) into 9 focused files under `css/`:
-  - `tokens.css` — design tokens & variables
-  - `base.css` — reset & typography
-  - `layout.css` — layout helpers & grids
-  - `topbar.css` — header & navigation
-  - `components.css` — buttons, cards, KPIs
-  - `content.css` — posts, articles, products, cart
-  - `decor.css` — pixel decor & Pac-Man overlay
-  - `misc.css` — footer, toast, about, 404, responsive
-  - `admin.css` — admin panel styles (NEW, expanded)
-  - `main.css` — entry point that imports all above
-- **Modular JS (ES modules)**: Split `script.js` + `admin.js` (1400+ lines each) into 10 focused modules under `js/`:
-  - `js/modules/utils.js` — `toman()`, `escapeHtml()`, `formatDate()`, `slugify()`, `debounce()`
-  - `js/modules/api.js` — `apiFetch()`, `adminApiFetch()`, in-memory cache
-  - `js/modules/toast.js` — `showToast()` / `showAdminToast()`
-  - `js/modules/seo.js` — `setSEO()`, `injectStructuredData()`
-  - `js/modules/cart.js` — shopping cart logic
-  - `js/modules/ui.js` — PixelMode, AudioSystem, MobileMenu, ScrollReveal, NavActive, Auth
-  - `js/modules/content.js` — DynamicContent loader
-  - `js/modules/fallback.js` — static article fallback
-  - `js/script.js` — frontend entry point
-  - `js/admin.js` — admin panel entry point
-- **`window.toman` removed**: `toman` is now exported from `utils.js` and imported where needed — no more global namespace pollution.
+### 🔥 Critical Fixes (User Requests)
 
-### 🖼 Asset Folder Restructure
-Before:
-```
-assets/
-├── decor-*.png (14 files mixed with everything else)
-├── card-*.svg
-├── hero-*.svg
-├── logo-*.png
-└── background-music.mp3
-```
+#### 1. Admin Panel Reverted to v3.1 Structure
+- **Problem**: v4.0 redesigned the admin panel, which the user found worse than v3.1
+- **Fix**: Reverted `admin.html` to v3.1's exact structure (all 11 tabs: Dashboard, Posts, New Post, Categories, Products, Media, Users, Audit Logs, Debug Center, Settings, Logout)
+- **Kept**: Modular CSS (`css/`) and JS (`js/`) structure from v4
+- **Result**: Familiar v3.1 admin UX with modern v4 codebase
 
-After:
-```
-assets/
-├── decor/       ← 14 character PNGs
-├── svg/         ← 6 SVG illustrations
-├── logos/       ← logos + favicon.svg (NEW)
-├── audio/       ← background-music.mp3
-└── uploads/     ← user uploads (posts/, categories/, users/, debug/, temp/)
-```
+#### 2. Super Admin Users Added
+- Created **Iliya** (`iliya@pixoris.local`) — super_admin
+- Created **Amirali** (`amirali@pixoris.local`) — super_admin
+- Password for both: `P!xoris2026` (pre-hashed with PBKDF2-SHA256, 100k iterations)
+- Migration: `012_add_super_admins.sql`
+- Also added to `schema.sql` for fresh installs
 
-### 🎯 New Favicon
-- Created `assets/logos/favicon.svg` — pixelated Pac-Man SVG (32x32, scalable)
-- All HTML files now reference it via: `<link rel="icon" type="image/svg+xml" href="assets/logos/favicon.svg" />`
-- Looks great in dark browser tabs (yellow Pac-Man on dark background)
+#### 3. Password Show/Hide Toggle
+- Added eye icon button (👁 / 🙈) to:
+  - Admin login form (`admin.html`)
+  - User login form (`login.html`)
+- CSS: `.password-input-wrapper` + `.password-toggle` in `components.css`
+- JS: `PasswordToggle` module in `ui.js`
 
-### 🎨 Admin Panel UX Improvements
-- **Sidebar**: now sticky, with active-state gradient background
-- **Dashboard stats**: 4-column grid (was 2), with glow effect on hover
-- **Posts table**: better spacing, hover highlight, status pills
-- **Editor**: cleaner RTE toolbar, SEO details collapsible, two-column layout for category/product
-- **Media grid**: hover-to-delete button, better aspect ratio
-- **Debug Center tab**: NEW — integrated into admin sidebar (was separate page only)
+#### 4. Clean Favicon (Background Removed)
+- Generated clean Pac-Man favicon using PIL (Python Imaging Library)
+- Removed dark background → transparent PNG
+- Created 4 favicon files:
+  - `assets/logos/favicon.svg` — scalable SVG (primary)
+  - `assets/logos/favicon.png` — 64×64 PNG (fallback)
+  - `assets/logos/favicon-32.png` — 32×32 (browser tab)
+  - `assets/logos/favicon-16.png` — 16×16 (legacy)
+  - `assets/logos/apple-touch-icon.png` — 180×180 (iOS)
+- Also cleaned background on `logo-pixoris-small.png`
+- All HTML files updated with both SVG + PNG fallback:
+  ```html
+  <link rel="icon" type="image/svg+xml" href="assets/logos/favicon.svg" />
+  <link rel="apple-touch-icon" href="assets/logos/apple-touch-icon.png" />
+  ```
 
-### ⚡ Performance Improvements
-- **ES modules**: browser caches each module separately — faster repeat loads
-- **In-memory API cache**: `apiFetchCached()` for GET requests (1-min TTL) — reduces redundant API calls
-- **`loading="lazy"`** on all images (already in v3.1, kept)
-- **Critical CSS path**: `main.css` uses `@import` so browser can prefetch modular files in parallel
-- **Reduced DOM manipulation**: Cart module reuses DOM nodes instead of re-rendering
+### 🚀 Production Hardening (from the upgrade prompt)
 
-### 🛠 Debug Results Verification
-Based on your debug output, all systems are green:
-- ✅ Worker: ok (3.1.0)
-- ✅ Database: ok (10 tables, 47ms response)
-- ✅ Schema: v11, synced
-- ✅ GitHub: ok (write_access: true, delete_access: true)
-- ✅ Auth: ok (JWT verified, admin exists)
-- ✅ Storage: ok (uploads folder exists, can_write: true)
-- ✅ Upload: ok (test file uploaded in 1209ms, returned GitHub URL)
-- ✅ Performance: ok (D1: 35ms, GitHub ping: 232ms)
+#### P3: Cloudflare Cache API Layer
+- New file: `worker/src/services/cache.js`
+- Wrapped high-traffic public endpoints with edge caching:
+  - `/api/categories` — 1 hour cache (3600s)
+  - `/api/settings` — 6 hour cache (21600s)
+  - `/api/featured` — 5 min cache (300s)
+  - `/api/trending` — 5 min cache (300s)
+- Response headers include `X-Cache-Status: HIT|MISS` for verification
+- Expected latency reduction: ~500ms → <150ms on cache hits
 
-**No backend changes needed** — v4.0 is purely a frontend refactor. The worker code from v3.1 is unchanged.
+#### P4: RSS Feed + Dynamic Sitemap
+- **New endpoint**: `GET /rss.xml`
+  - Returns RSS 2.0 XML feed of latest 20 published posts
+  - Includes title, link, pubDate, category, description
+  - 5-min cache
+  - Compatible with Feedly, Google News, etc.
+- **New endpoint**: `GET /sitemap.xml`
+  - Dynamic XML sitemap (not static file)
+  - Includes: static pages + all published posts + all categories + all products
+  - 10-min cache
+  - Updated `robots.txt` to reference both worker and pages sitemaps
+
+#### P5: Audit Log Viewer (already existed, verified)
+- The Audit Logs tab in admin panel shows all tracked actions:
+  - LOGIN_SUCCESS, LOGIN_FAILED
+  - POST_CREATED, POST_UPDATED, POST_DELETED
+  - CATEGORY_*, PRODUCT_*, MEDIA_*, USER_*
+  - SETTINGS_CHANGED
 
 ## 📁 Structure
 
 ```
-pixoris-v4/
+pixoris-v4.1/
 ├── README.md
 ├── MIGRATION.md
-├── worker/                    ← UNCHANGED from v3.1
+├── worker/
 │   ├── migrations/
-│   ├── schema.sql
-│   ├── wrangler.toml
-│   ├── run-migrations.sh
-│   └── src/
-│       ├── index.js
-│       ├── router.js
-│       ├── debug.js
-│       ├── services/ (github.js, storage.js)
-│       ├── utils/ (response.js, logger.js)
-│       └── middleware/ (auth.js, rateLimit.js)
+│   │   └── 012_add_super_admins.sql    ← NEW
+│   ├── schema.sql                       ← UPDATED (adds Iliya + Amirali)
+│   ├── src/
+│   │   ├── index.js                     ← UPDATED (cache + RSS + sitemap)
+│   │   ├── services/
+│   │   │   ├── github.js
+│   │   │   ├── storage.js
+│   │   │   └── cache.js                 ← NEW
+│   │   └── ... (unchanged)
 │
-└── page/                      ← FULLY REFACTORED
-    ├── *.html (12 files, all updated with new paths)
-    ├── css/                   ← NEW modular CSS
-    │   ├── main.css           (entry — imports all)
-    │   ├── tokens.css
-    │   ├── base.css
-    │   ├── layout.css
-    │   ├── topbar.css
-    │   ├── components.css
-    │   ├── content.css
-    │   ├── decor.css
-    │   ├── misc.css
-    │   └── admin.css
-    ├── js/                    ← NEW modular JS (ES modules)
-    │   ├── script.js          (frontend entry)
-    │   ├── admin.js           (admin entry)
+└── page/
+    ├── admin.html                       ← REVERTED to v3.1 structure
+    ├── login.html                       ← UPDATED (password toggle)
+    ├── js/
+    │   ├── admin.js                     ← REVERTED to v3.1 logic (as ES module)
+    │   ├── script.js                    ← UPDATED (PasswordToggle init)
     │   └── modules/
-    │       ├── utils.js
-    │       ├── api.js
-    │       ├── toast.js
-    │       ├── seo.js
-    │       ├── cart.js
-    │       ├── ui.js
-    │       ├── content.js
-    │       └── fallback.js
-    ├── assets/                ← RESTRUCTURED
-    │   ├── decor/             (14 PNGs)
-    │   ├── svg/               (6 SVGs)
-    │   ├── logos/             (2 logos + favicon.svg NEW)
-    │   ├── audio/             (1 mp3)
-    │   └── uploads/           (5 empty folders ready)
-    ├── robots.txt
-    └── sitemap.xml
+    │       ├── ui.js                    ← UPDATED (PasswordToggle module)
+    │       └── ... (unchanged)
+    ├── css/
+    │   ├── components.css               ← UPDATED (password toggle styles)
+    │   └── ... (unchanged)
+    ├── assets/
+    │   └── logos/
+    │       ├── favicon.svg              ← UPDATED (cleaner Pac-Man)
+    │       ├── favicon.png              ← NEW (64×64)
+    │       ├── favicon-32.png           ← NEW
+    │       ├── favicon-16.png           ← NEW
+    │       ├── apple-touch-icon.png     ← NEW
+    │       └── logo-pixoris-small.png   ← CLEANED (background removed)
+    └── ... (other files unchanged)
 ```
 
 ## 🚀 Deployment
 
-### Frontend (Cloudflare Pages)
-1. Extract `pixoris-v4.zip`
-2. Upload everything in `page/` to your `Pixoris` GitHub repo (replaces existing files)
-3. Cloudflare Pages auto-deploys
-4. Visit `https://pixoris.pages.dev` — verify favicon shows in browser tab
+### 1. Worker (Backend)
+```bash
+cd worker
 
-### Backend (Worker)
-**No changes needed.** The worker from v3.1 is fully compatible.
+# Run the new migration to add Iliya + Amirali
+wrangler d1 execute pixoris-db --remote --file=./migrations/012_add_super_admins.sql
+
+# Deploy worker (includes cache layer + RSS + sitemap)
+wrangler deploy
+```
+
+### 2. Frontend (Cloudflare Pages)
+- Upload all files in `page/` to your `Pixoris` GitHub repo
+- Cloudflare Pages auto-deploys
+
+### 3. Verify
+```bash
+# Check new endpoints
+curl https://dev.pixoris.workers.dev/rss.xml | head -20
+curl https://dev.pixoris.workers.dev/sitemap.xml | head -20
+
+# Check cache headers
+curl -I https://dev.pixoris.workers.dev/api/categories
+# Should see: X-Cache-Status: MISS (first call), HIT (second call)
+
+# Verify new admins exist
+curl https://dev.pixoris.workers.dev/api/debug/auth | jq
+# admin_exists should be true
+
+# Login with new admin
+curl -X POST https://dev.pixoris.workers.dev/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"Iliya","password":"P!xoris2026"}'
+# Should return a JWT token
+```
 
 ## ✅ Verification Checklist
 
-After deploying v4.0:
+- [ ] Admin login page shows password toggle (eye icon)
+- [ ] Can login as `admin` / `pixoris2026`
+- [ ] Can login as `Iliya` / `P!xoris2026`
+- [ ] Can login as `Amirali` / `P!xoris2026`
+- [ ] Admin panel shows v3.1 structure (11 tabs in sidebar)
+- [ ] Favicon shows in browser tab (Pac-Man icon)
+- [ ] `/rss.xml` returns valid RSS XML
+- [ ] `/sitemap.xml` returns valid sitemap XML
+- [ ] `X-Cache-Status: HIT` on second call to `/api/categories`
+- [ ] Debug Center tab works (all checks green)
+- [ ] No console errors in browser
 
-- [ ] Visit `https://pixoris.pages.dev` — Pac-Man favicon appears in browser tab
-- [ ] Homepage loads with featured posts, latest posts, shop preview, trending
-- [ ] News page loads with pagination
-- [ ] Shop page loads with products from API
-- [ ] Product detail page works (`?slug=`)
-- [ ] Article page works (`?slug=`)
-- [ ] Admin login works (no `toman` error in console)
-- [ ] Admin dashboard shows 8 stat cards
-- [ ] Admin Debug Center tab works (all checks green)
-- [ ] Media upload works
-- [ ] Cart works (add/remove/checkout display)
-- [ ] Pac Mode toggle works
-- [ ] Music toggle works
-- [ ] Mobile menu works
-- [ ] No 404 errors in browser DevTools Network tab
+## 🔐 Admin Credentials
 
-## 🎨 Design System
+| Username | Password | Role |
+|----------|----------|------|
+| admin | pixoris2026 | super_admin |
+| Iliya | P!xoris2026 | super_admin |
+| Amirali | P!xoris2026 | super_admin |
 
-### Colors (CSS variables in `tokens.css`)
-```css
---bg: #070b16          --cyan: #4ee5ff
---bg-soft: #0d1222     --purple: #9264ff
---card: rgba(17,23,40,.88)  --pink: #ff4e9c
---text: #f5f7ff        --yellow: #ffd84c
---text-muted: #9aa5c7  --green: #39f37a
-```
-
-### Typography
-- Main font: Tahoma, Vazirmatn, Arial
-- Pixel font: Courier New (for Pac Mode)
-- Mono font: SFMono-Regular, Consolas (for code blocks)
-
-### Spacing Scale
-`--space-1` (4px) → `--space-12` (48px) — consistent vertical rhythm
-
-### Radius Scale
-`--radius-xs` (6px) → `--radius-full` (999px)
-
-## 🔧 Development Notes
-
-### Adding a new CSS rule
-1. Identify which module it belongs to (e.g., new card variant → `components.css`)
-2. Add the rule using tokens (`var(--space-4)`, `var(--cyan)`, etc.)
-3. No need to touch `main.css` — it auto-imports all modules
-
-### Adding a new JS module
-1. Create `js/modules/your-module.js`
-2. Export functions: `export const myFunc = () => {...}`
-3. Import where needed: `import { myFunc } from './modules/your-module.js'`
-4. HTML must use `<script type="module">` (already set up)
-
-### Adding a new admin tab
-1. Add `<a data-admin-tab="your-tab">` in `admin.html` sidebar
-2. Add `<div class="admin-tab" data-tab="your-tab">` content section
-3. Add `if (target === 'your-tab') initYourTab();` in `admin.js` `initTabs()`
-4. Implement `initYourTab()` function
-
-## 📊 Performance Metrics (from your debug output)
-
-| Metric | Value | Status |
-|--------|-------|--------|
-| D1 query time | 35-70ms | ✅ Excellent |
-| GitHub API ping | 232ms | ✅ Good |
-| Upload test | 1209ms | ✅ Good (includes commit) |
-| Total debug response | 267ms | ✅ Fast |
-| Worker baseline | 1ms | ✅ Minimal overhead |
-
-All performance metrics are healthy. No optimization needed.
+⚠️ **Change all passwords after first login** via the Users tab in admin panel.
 
 ---
 
-**Built by Super Z for Pixoris** · v4.0.0 · 2026
+**Built by Super Z for Pixoris** · v4.1.0 · 2026

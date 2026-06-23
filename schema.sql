@@ -168,16 +168,21 @@ INSERT OR IGNORE INTO categories (name, slug, description, color, sort_order, is
   ('Guides', 'guides', 'راهنما و آموزش', '#ff7b4e', 6, 1),
   ('News', 'news', 'اخبار روز', '#4ee5ff', 7, 1);
 
--- ============= SEED: ADMIN (password will be hashed on first login) =============
--- Default password: pixoris2026
+-- ============= SEED: ADMINS =============
+-- Default admin (password: pixoris2026 — auto-hashed on first login)
 INSERT OR IGNORE INTO admins (username, email, password_hash, role, is_active) VALUES
   ('admin', 'admin@pixoris.local', 'pixoris2026', 'super_admin', 1);
 
+-- Super admins (password: P!xoris2026 — pre-hashed with PBKDF2-SHA256, 100k iterations)
+INSERT OR IGNORE INTO admins (username, email, password_hash, role, is_active) VALUES
+  ('Iliya', 'iliya@pixoris.local', 'pbkdf2:a7d796b254db4eda8b11eb87ccb49ac5:XDMl2JDc7WC3zmJwNLTzZv4_CsPRt9MrjqS2TFXjDpo', 'super_admin', 1),
+  ('Amirali', 'amirali@pixoris.local', 'pbkdf2:27c703a6efdc4ff29de43b51c10d0661:GSYjGQbCzK7MV3Mpls8gqiCOyRlUpFrCkrH0HPA20Eg', 'super_admin', 1);
+
 -- ============= SEED: PRODUCTS =============
 INSERT OR IGNORE INTO products (title, slug, description, price, image_url, category, featured, active, sort_order, stock) VALUES
-  ('اکشن‌فیگور Cyber Hero', 'cyber-hero', 'یک اکشن‌فیگور سایبرپانکی با استند اختصاصی، رنگ‌آمیزی دقیق و طراحی مناسب دکور اتاق گیمینگ.', 1490000, 'assets/card-shop.svg', 'Figure', 1, 1, 1, 25),
-  ('پوستر سینمایی Neon Frame', 'neon-poster', 'پوستر گیکی با ترکیب رنگ نئون، مناسب دیوار اتاق گیم و فضای استریم.', 320000, 'assets/hero-cinema.svg', 'Poster', 0, 1, 2, 80),
-  ('Pixel Box Collection', 'pixel-box', 'یک پک سورپرایزی برای عاشقان آیتم‌های پیکسلی؛ شامل کارت، استیکر، پین و آیتم‌های کوچک کلکسیونی.', 690000, 'assets/hero-gaming.svg', 'Merch', 1, 1, 3, 50);
+  ('اکشن‌فیگور Cyber Hero', 'cyber-hero', 'یک اکشن‌فیگور سایبرپانکی با استند اختصاصی، رنگ‌آمیزی دقیق و طراحی مناسب دکور اتاق گیمینگ.', 1490000, 'assets/svg/card-shop.svg', 'Figure', 1, 1, 1, 25),
+  ('پوستر سینمایی Neon Frame', 'neon-poster', 'پوستر گیکی با ترکیب رنگ نئون، مناسب دیوار اتاق گیم و فضای استریم.', 320000, 'assets/svg/hero-cinema.svg', 'Poster', 0, 1, 2, 80),
+  ('Pixel Box Collection', 'pixel-box', 'یک پک سورپرایزی برای عاشقان آیتم‌های پیکسلی؛ شامل کارت، استیکر، پین و آیتم‌های کوچک کلکسیونی.', 690000, 'assets/svg/hero-gaming.svg', 'Merch', 1, 1, 3, 50);
 
 -- ============= SEED: SETTINGS =============
 INSERT OR IGNORE INTO settings (key, value) VALUES
