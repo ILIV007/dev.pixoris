@@ -936,22 +936,26 @@ router.post('/api/admin/upload', adminAuth(async (request, env) => {
   try {
     const formData = await request.formData();
     const file = formData.get('file');
-    const folder = formData.get('folder') || '';
+    const folder = formData.get('folder') || 'posts';
     const altText = formData.get('alt_text') || '';
     if (!file) return errorResponse('No file uploaded');
 
     const bytes = await file.arrayBuffer();
     const base64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
     const safeName = file.name.replace(/\s+/g, '-').replace(/[^\w.\-]/g, '');
-    const filename = `${Date.now()}-${safeName}`;
 
-    const { url, storage } = await Storage.upload(filename, base64, env);
+    // Build organized path: assets/uploads/{folder}/{timestamp}-{filename}
+    const { buildPath } = await import('./services/storage.js');
+    const path = buildPath(folder, file.name);
+    const filename = path.split('/').pop(); // just the filename part for DB
+
+    const { url, storage } = await Storage.upload(filename, base64, env, { path, folder });
     const result = await env.DB.prepare(
       'INSERT INTO media (filename, url, original_name, size, mime_type, alt_text, folder, storage, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).bind(filename, url, file.name, bytes.byteLength, file.type, altText, folder, storage, request.admin.id).run();
 
-    await auditLog(env, request.admin.id, 'media.upload', 'media', result.meta?.last_row_id, { filename, folder }, request);
-    return successResponse({ url, filename, id: result.meta?.last_row_id });
+    await auditLog(env, request.admin.id, 'media.upload', 'media', result.meta?.last_row_id, { filename, folder, path }, request);
+    return successResponse({ url, filename, id: result.meta?.last_row_id, path, folder });
   } catch (err) {
     return errorResponse(err.message, 500);
   }

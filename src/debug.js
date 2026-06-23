@@ -59,14 +59,20 @@ const checkDatabase = async (env) => {
 };
 
 const checkSchema = async (env) => {
+  // Single query to get ALL tables at once (instead of 10 sequential queries)
+  const t = await time(async () => {
+    const r = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'`
+    ).all();
+    return r.results?.map(r => r.name) || [];
+  });
+
+  const existingTables = new Set(t.result || []);
   const tables = {};
   for (const name of REQUIRED_TABLES) {
-    const t = await time(async () => {
-      await env.DB.prepare(`SELECT 1 FROM ${name} LIMIT 1`).first().catch(() => null);
-      return true;
-    });
-    tables[name] = t.ok;
+    tables[name] = existingTables.has(name);
   }
+
   let migrationVersion = 0;
   try {
     const v = await env.DB.prepare('SELECT MAX(version) as v FROM schema_migrations').first();
@@ -80,6 +86,7 @@ const checkSchema = async (env) => {
     migration_version: migrationVersion,
     expected_version: SCHEMA_VERSION,
     schema_synced: migrationVersion >= SCHEMA_VERSION,
+    ms: t.ms,
   };
 };
 

@@ -40,13 +40,15 @@ export const validateFile = (file) => {
 };
 
 // ============ PATH NORMALIZATION ============
-// Generate a clean, unique path under assets/uploads/<folder>/<date>/<filename>
+// Generate a clean, unique path under assets/uploads/<folder>/<filename>
+// Folder structure: assets/uploads/{posts|categories|users|products|debug|temp}/<filename>
 export const buildPath = (folder, filename) => {
-  const safeFolder = (folder || 'posts').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
-  const date = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+  const validFolders = ['posts', 'categories', 'users', 'products', 'debug', 'temp'];
+  const requestedFolder = (folder || 'posts').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+  const safeFolder = validFolders.includes(requestedFolder) ? requestedFolder : 'posts';
   const safeName = String(filename).replace(/\s+/g, '-').replace(/[^\w.\-]/g, '');
   const timestamp = Date.now();
-  return `assets/uploads/${safeFolder}/${date}/${timestamp}-${safeName}`;
+  return `assets/uploads/${safeFolder}/${timestamp}-${safeName}`;
 };
 
 // ============ CONVERT ARRAYBUFFER → BASE64 ============
