@@ -1,165 +1,173 @@
-# Pixoris v3.0 Migration Guide
+# Pixoris v4.0 Migration Guide
 
-## From v2.2 → v3.0
+## From v3.1 → v4.0
+
+### No Backend Changes
+v4.0 is **frontend-only**. The worker code from v3.1 is unchanged. No database migration needed.
 
 ### What's New
-- **Fixed**: `toman` duplicate declaration (admin.js)
-- **Added**: 12 `/api/debug/*` diagnostic endpoints
-- **Added**: `X-Response-Time` + `Server-Timing` headers on every response
-- **Added**: `Cache-Control` on public GET endpoints
-- **Added**: Graceful fallback for missing schema columns
-- **Added**: `011_v3_recovery.sql` idempotent recovery migration
-- **Added**: `run-migrations.sh` helper script
-- **Added**: `debug.html` visual diagnostic dashboard
+- ✅ Modular CSS (9 files under `css/`)
+- ✅ Modular JS (10 ES modules under `js/`)
+- ✅ Organized asset folders (`decor/`, `svg/`, `logos/`, `audio/`, `uploads/`)
+- ✅ New favicon (`assets/logos/favicon.svg` — pixel Pac-Man)
+- ✅ Improved admin panel UX
+- ✅ In-memory API cache for GET requests
+- ✅ Better responsive design
 
-### Migration Steps (from v2.2)
+### Migration Steps
 
-You do NOT need to run any new database migrations if v2.2 was properly installed. v3.0 uses the same schema (v10/v11).
-
-```bash
-# 1. Deploy the new worker
-cd worker
-wrangler deploy
-
-# 2. Upload new frontend files to your GitHub repo
-# (Cloudflare Pages auto-deploys)
-
-# 3. Verify
-curl https://dev.pixoris.workers.dev/api/debug
-```
-
-### Migration Steps (from v2.0/v2.1 — your current state)
-
-If your D1 database is missing tables (`products`, `settings`, `audit_logs`, `schema_migrations`) or columns (`categories.is_active`, `posts.status`), run:
-
-```bash
-cd worker
-chmod +x run-migrations.sh
-./run-migrations.sh          # for remote D1
-# OR
-./run-migrations.sh --local  # for local dev
-```
-
-This runs `schema.sql` first (creates all tables with `IF NOT EXISTS`), then runs each migration file in order (001-011). Migration 011 is a recovery migration that re-ensures all v3 tables exist.
-
-### Verifying Migration Success
-
-```bash
-# Quick check
-curl https://dev.pixoris.workers.dev/api/debug
-
-# Detailed schema check
-curl https://dev.pixoris.workers.dev/api/debug/schema
-
-# Expected: all 10 tables should be true, migration_version >= 11
-```
-
-If any table shows `false`, run that specific migration:
-
-| Missing table | Migration file |
-|---------------|----------------|
-| products | 002_add_products.sql |
-| audit_logs | 006_audit_logs.sql |
-| settings | 010_settings.sql |
-| schema_migrations | 011_v3_recovery.sql |
-
-| Missing column | Migration file |
-|-----------------|----------------|
-| categories.is_active | 003_expand_categories.sql |
-| posts.status | 004_expand_posts.sql |
-| admins.role | 005_user_roles.sql |
-| products.stock | 008_expand_products.sql |
-
-### If `categories.is_active` is missing
-
-```bash
-wrangler d1 execute pixoris-db --remote --command="ALTER TABLE categories ADD COLUMN is_active INTEGER DEFAULT 1;"
-wrangler d1 execute pixoris-db --remote --command="UPDATE categories SET is_active = 1;"
-```
-
-### If `posts.status` is missing
-
-```bash
-wrangler d1 execute pixoris-db --remote --command="ALTER TABLE posts ADD COLUMN status TEXT DEFAULT 'draft';"
-wrangler d1 execute pixoris-db --remote --command="UPDATE posts SET status = 'published' WHERE published = 1;"
-wrangler d1 execute pixoris-db --remote --command="UPDATE posts SET status = 'draft' WHERE published = 0 OR published IS NULL;"
-```
-
-## Common Issues & Fixes
-
-### Issue: "Identifier 'toman' has already been declared"
-**Status**: ✅ Fixed in v3.0
-**Cause**: v2.2 admin.js declared `function toman(num) {...}` which conflicted with script.js's `const toman = ...`
-**Fix**: Removed the duplicate; admin.js now uses `window.toman` set by script.js.
-
-### Issue: "no such column: c.is_active"
-**Status**: ✅ Fixed in v3.0 (with graceful fallback) + migration available
-**Cause**: Migration 003 was not run
-**Fix**: Run migration 003 OR the v3 worker will fall back to `SELECT *` without the filter (returns a `warning` field).
-
-### Issue: "no such table: settings"
-**Status**: ✅ Fixed in v3.0 (with graceful fallback) + migration available
-**Cause**: Migration 010 was not run
-**Fix**: Run migration 010 OR the v3 worker will return `{settings: {}, warning: "..."}` instead of crashing.
-
-### Issue: Admin login frozen / never completes
-**Status**: ✅ Fixed in v3.0
-**Cause**: v2.2 admin.js crashed on load due to `toman` duplicate, so the login form's submit handler was never attached.
-**Fix**: Same as the `toman` fix above — admin.js now loads cleanly.
-
-### Issue: GitHub upload fails
-**Verify with**: `GET /api/debug/github` and `GET /api/debug/upload`
-**Common causes**:
-- `GITHUB_TOKEN` secret not set → `wrangler secret put GITHUB_TOKEN`
-- Token doesn't have `repo:write` scope → regenerate PAT
-- `GITHUB_REPO` not set → `wrangler secret put GITHUB_REPO` (format: `ILIV007/Pixoris`)
-- `GITHUB_BRANCH` not set → defaults to `main`, change if your branch differs
-
-### Issue: CMS CRUD fails
-**Verify with**: `GET /api/debug/cms`
-**Common causes**:
-- Posts table missing required columns → run migrations 004, 007
-- Permission issues on D1 → check wrangler.toml binding
-
-## Rollback to v2.2
-
-If v3.0 causes issues:
-
-1. Re-deploy v2.2 worker from git history
-2. Restore v2.2 frontend files
-3. The v3.0 schema additions are backward-compatible
-4. If `password_hash` has PBKDF2 hashes, v2.2 worker can verify them (same format)
-5. To reset admin password:
-   ```sql
-   UPDATE admins SET password_hash = 'pixoris2026' WHERE username = 'admin';
+1. **Backup current frontend** (optional — your GitHub history has it)
+   ```bash
+   git clone https://github.com/ILIV007/Pixoris.git pixoris-backup
    ```
 
-## Post-Deploy Verification Checklist
+2. **Upload new frontend files**
+   - Extract `pixoris-v4.zip`
+   - Replace all files in your `Pixoris` GitHub repo with the contents of `page/`
+   - Important: **delete the old `styles.css`, `script.js`, `admin.js`** at the root level (they're now in `css/` and `js/`)
+   - Cloudflare Pages auto-deploys
 
-- [ ] `curl https://dev.pixoris.workers.dev/api/debug` returns all "ok"
-- [ ] `curl https://dev.pixoris.workers.dev/api/debug/schema` shows all 10 tables as `true`
-- [ ] `curl https://dev.pixoris.workers.dev/api/debug/cms` returns `{"create":true,"read":true,"update":true,"delete":true}`
-- [ ] `curl https://dev.pixoris.workers.dev/api/debug/upload` returns a GitHub URL
-- [ ] Visit `/admin.html` — login works, no `toman` error in console
-- [ ] Visit `/debug.html` — visual dashboard loads and all checks pass
-- [ ] Response headers include `X-Response-Time` on every API call
+3. **Verify deployment**
+   ```bash
+   # Favicon should load
+   curl -I https://pixoris.pages.dev/assets/logos/favicon.svg
+   # Should return 200 OK
 
-## Storage Layout (Recommended)
+   # CSS should load
+   curl -I https://pixoris.pages.dev/css/main.css
+   # Should return 200 OK
 
-All media uploads go to **the same Pixoris repo** (NOT a separate media repo):
+   # JS modules should load
+   curl -I https://pixoris.pages.dev/js/script.js
+   # Should return 200 OK
+   ```
 
+4. **Test in browser**
+   - Visit `https://pixoris.pages.dev`
+   - Check browser tab — Pac-Man favicon should appear
+   - Open DevTools → Console — no errors
+   - Open DevTools → Network — all requests return 200
+   - Test admin panel at `/admin.html`
+
+### If You See "404 styles.css"
+
+This means the old HTML is cached. Force-refresh:
+- **Hard reload**: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
+- **Or**: Open DevTools → Network → check "Disable cache" → reload
+- **Or**: Wait 5-10 minutes for Cloudflare Pages cache to expire
+
+### If You See "Module script failed to load"
+
+This usually means the JS file path is wrong. Verify:
+```bash
+# These should all return 200
+curl -I https://pixoris.pages.dev/js/script.js
+curl -I https://pixoris.pages.dev/js/admin.js
+curl -I https://pixoris.pages.dev/js/modules/utils.js
+curl -I https://pixoris.pages.dev/js/modules/api.js
 ```
-ILIV007/Pixoris/
-└── assets/
-    └── uploads/
-        ├── posts/         ← images for articles
-        ├── categories/    ← category banners/icons
-        ├── users/         ← user avatars
-        ├── debug/         ← auto-generated by /api/debug/upload
-        └── temp/          ← temp uploads
+
+If any return 404, the file wasn't uploaded. Re-check your GitHub repo.
+
+### If Images Don't Load
+
+The asset paths changed:
+- Old: `assets/decor-wanda.png`
+- New: `assets/decor/decor-wanda.png`
+
+All HTML files have been updated, but if you have custom content in your database (e.g., post content with hardcoded `<img src="assets/card-shop.svg">`), those will break.
+
+**Fix**: Run this SQL on your D1 database:
+```sql
+UPDATE posts
+SET content = REPLACE(content, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
+WHERE content LIKE '%assets/card-shop.svg%';
+
+UPDATE posts
+SET content = REPLACE(content, 'assets/card-game.svg', 'assets/svg/card-game.svg')
+WHERE content LIKE '%assets/card-game.svg%';
+
+UPDATE posts
+SET content = REPLACE(content, 'assets/card-cinema.svg', 'assets/svg/card-cinema.svg')
+WHERE content LIKE '%assets/card-cinema.svg%';
+
+UPDATE posts
+SET content = REPLACE(content, 'assets/hero-cinema.svg', 'assets/svg/hero-cinema.svg')
+WHERE content LIKE '%assets/hero-cinema.svg%';
+
+UPDATE posts
+SET content = REPLACE(content, 'assets/hero-gaming.svg', 'assets/svg/hero-gaming.svg')
+WHERE content LIKE '%assets/hero-gaming.svg%';
+
+UPDATE posts
+SET content = REPLACE(content, 'assets/hero-shop.svg', 'assets/svg/hero-shop.svg')
+WHERE content LIKE '%assets/hero-shop.svg%';
 ```
 
-The worker uses these env vars:
-- `GITHUB_REPO=ILIV007/Pixoris`
-- `GITHUB_BRANCH=main`
-- `GITHUB_TOKEN` (secret)
+Also update product image URLs:
+```sql
+UPDATE products
+SET image_url = REPLACE(image_url, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
+WHERE image_url LIKE '%assets/card-shop.svg%';
+
+UPDATE products
+SET image_url = REPLACE(image_url, 'assets/hero-cinema.svg', 'assets/svg/hero-cinema.svg')
+WHERE image_url LIKE '%assets/hero-cinema.svg%';
+
+UPDATE products
+SET image_url = REPLACE(image_url, 'assets/hero-gaming.svg', 'assets/svg/hero-gaming.svg')
+WHERE image_url LIKE '%assets/hero-gaming.svg%';
+```
+
+And media URLs in the media table:
+```sql
+UPDATE media
+SET url = REPLACE(url, 'assets/card-shop.svg', 'assets/svg/card-shop.svg')
+WHERE url LIKE '%assets/card-shop.svg%';
+```
+
+Run via:
+```bash
+cd worker
+wrangler d1 execute pixoris-db --remote --command="UPDATE posts SET content = REPLACE(content, 'assets/card-shop.svg', 'assets/svg/card-shop.svg') WHERE content LIKE '%assets/card-shop.svg%';"
+# (repeat for each replacement)
+```
+
+### Rollback to v3.1
+
+If v4.0 causes issues:
+
+1. Revert your GitHub repo to the previous commit
+2. Cloudflare Pages auto-deploys the old version
+3. The worker is unchanged, so no rollback needed there
+4. If you ran the SQL UPDATEs above, you can revert them:
+   ```sql
+   UPDATE posts SET content = REPLACE(content, 'assets/svg/card-shop.svg', 'assets/card-shop.svg');
+   -- etc.
+   ```
+
+## Post-Deploy Verification
+
+- [ ] Favicon shows in browser tab (Pac-Man icon)
+- [ ] Homepage loads without errors
+- [ ] DevTools Console shows no errors
+- [ ] DevTools Network shows all 200s (no 404s)
+- [ ] Admin panel works
+- [ ] Debug Center tab shows all green
+- [ ] Mobile view works (test at 375px width)
+- [ ] Pac Mode toggle works
+- [ ] Music toggle works
+
+## File Mapping (v3.1 → v4.0)
+
+| v3.1 Location | v4.0 Location |
+|---------------|---------------|
+| `styles.css` | `css/main.css` (imports 9 modules) |
+| `script.js` | `js/script.js` (imports 8 modules) |
+| `admin.js` | `js/admin.js` (imports modules) |
+| `assets/decor-*.png` | `assets/decor/decor-*.png` |
+| `assets/card-*.svg` | `assets/svg/card-*.svg` |
+| `assets/hero-*.svg` | `assets/svg/hero-*.svg` |
+| `assets/logo-pixoris-small.png` | `assets/logos/logo-pixoris-small.png` |
+| `assets/background-music.mp3` | `assets/audio/background-music.mp3` |
+| (none) | `assets/logos/favicon.svg` (NEW) |

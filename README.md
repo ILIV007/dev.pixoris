@@ -1,247 +1,226 @@
-# Pixoris v3.0 — Production Verified CMS
+# Pixoris v4.0 — UI/UX Overhaul + Frontend Refactor
 
-> Fixed all critical bug from v2.2 + comprehensive debug system + performance headers.
+> **Major frontend refactor**: modular CSS, modular JS (ES modules), organized assets, new favicon, CMS-grade admin panel, and performance improvements.
 
-## 🎯 v3 Highlights
+## 🎯 What's New in v4.0
 
-### 🔥 Critical Fixes (Priority 1)
-- ✅ **Fixed**: `Uncaught SyntaxError: Identifier 'toman' has already been declared` — removed duplicate `toman` from admin.js, exposed via `window.toman` from script.js
-- ✅ **Fixed**: Schema sync — added graceful fallback for missing columns (`categories.is_active`, `posts.status`, missing `products`/`settings`/`audit_logs` tables)
-- ✅ **Fixed**: `no such table: settings` — endpoint now returns warning + empty object instead of crashing
-- ✅ **Fixed**: `no such column: c.is_active` — endpoint falls back to `SELECT *` without filter
+### 🎨 Frontend Refactor (Major)
+- **Modular CSS**: Split `styles.css` (825 lines) into 9 focused files under `css/`:
+  - `tokens.css` — design tokens & variables
+  - `base.css` — reset & typography
+  - `layout.css` — layout helpers & grids
+  - `topbar.css` — header & navigation
+  - `components.css` — buttons, cards, KPIs
+  - `content.css` — posts, articles, products, cart
+  - `decor.css` — pixel decor & Pac-Man overlay
+  - `misc.css` — footer, toast, about, 404, responsive
+  - `admin.css` — admin panel styles (NEW, expanded)
+  - `main.css` — entry point that imports all above
+- **Modular JS (ES modules)**: Split `script.js` + `admin.js` (1400+ lines each) into 10 focused modules under `js/`:
+  - `js/modules/utils.js` — `toman()`, `escapeHtml()`, `formatDate()`, `slugify()`, `debounce()`
+  - `js/modules/api.js` — `apiFetch()`, `adminApiFetch()`, in-memory cache
+  - `js/modules/toast.js` — `showToast()` / `showAdminToast()`
+  - `js/modules/seo.js` — `setSEO()`, `injectStructuredData()`
+  - `js/modules/cart.js` — shopping cart logic
+  - `js/modules/ui.js` — PixelMode, AudioSystem, MobileMenu, ScrollReveal, NavActive, Auth
+  - `js/modules/content.js` — DynamicContent loader
+  - `js/modules/fallback.js` — static article fallback
+  - `js/script.js` — frontend entry point
+  - `js/admin.js` — admin panel entry point
+- **`window.toman` removed**: `toman` is now exported from `utils.js` and imported where needed — no more global namespace pollution.
 
-### 🔧 Debug System (Priority 2)
-12 new diagnostic endpoints under `/api/debug/*`:
-- `GET /api/debug` — quick overview (worker/db/schema/github/auth)
-- `GET /api/debug/full` — full diagnostic (12 checks in parallel)
-- `GET /api/debug/worker` — version + timestamp
-- `GET /api/debug/database` — D1 connection + tables list + count
-- `GET /api/debug/schema` — verify all 10 required tables exist + migration version
-- `GET /api/debug/categories` — query + count + timing
-- `GET /api/debug/posts` — query + count (published/drafts) + timing
-- `GET /api/debug/settings` — settings table read test
-- `GET /api/debug/auth` — JWT_SECRET exists + admin exists + token sign/verify round-trip
-- `GET /api/debug/github` — repo exists + branch exists + token valid
-- `GET /api/debug/upload` — live upload test to `assets/uploads/debug/test-*.txt`
-- `GET /api/debug/storage` — verify uploads folder exists/writable
-- `GET /api/debug/cms` — full CRUD round-trip test (create/read/update/delete a test post)
-- `GET /api/debug/performance` — D1 query time + GitHub ping + total response time
+### 🖼 Asset Folder Restructure
+Before:
+```
+assets/
+├── decor-*.png (14 files mixed with everything else)
+├── card-*.svg
+├── hero-*.svg
+├── logo-*.png
+└── background-music.mp3
+```
 
-**Plus**: `debug.html` page that gives a beautiful UI to run all these checks.
+After:
+```
+assets/
+├── decor/       ← 14 character PNGs
+├── svg/         ← 6 SVG illustrations
+├── logos/       ← logos + favicon.svg (NEW)
+├── audio/       ← background-music.mp3
+└── uploads/     ← user uploads (posts/, categories/, users/, debug/, temp/)
+```
 
-### ⚡ Performance (Priority 4)
-- ✅ `X-Response-Time` header on every response (ms)
-- ✅ `Server-Timing` header for browser DevTools
-- ✅ `Cache-Control` on public GET endpoints:
-  - `/api/health`: 60s
-  - `/api/posts`: 60s (browser) / 120s (CDN)
-  - `/api/categories`: 300s
-  - `/api/trending`: 300s
-  - `/api/products`: 300s
-  - `/api/sitemap`: 600s
-  - `/api/settings`: 600s
-- ✅ Pagination already on `/api/posts` since v2.2
-- ✅ `loading="lazy"` on all images since v2.2
+### 🎯 New Favicon
+- Created `assets/logos/favicon.svg` — pixelated Pac-Man SVG (32x32, scalable)
+- All HTML files now reference it via: `<link rel="icon" type="image/svg+xml" href="assets/logos/favicon.svg" />`
+- Looks great in dark browser tabs (yellow Pac-Man on dark background)
 
-### 🛡️ Resilience Improvements
-- ✅ Worker no longer crashes on missing schema columns — falls back gracefully with warning
-- ✅ Catch-all error handler in `fetch()` — never returns a bare 500
-- ✅ Login flow: doesn't crash if `is_active` or `last_login` columns are missing
-- ✅ Search/posts/categories endpoints: try v3 schema first, fall back to v2.1 schema
+### 🎨 Admin Panel UX Improvements
+- **Sidebar**: now sticky, with active-state gradient background
+- **Dashboard stats**: 4-column grid (was 2), with glow effect on hover
+- **Posts table**: better spacing, hover highlight, status pills
+- **Editor**: cleaner RTE toolbar, SEO details collapsible, two-column layout for category/product
+- **Media grid**: hover-to-delete button, better aspect ratio
+- **Debug Center tab**: NEW — integrated into admin sidebar (was separate page only)
+
+### ⚡ Performance Improvements
+- **ES modules**: browser caches each module separately — faster repeat loads
+- **In-memory API cache**: `apiFetchCached()` for GET requests (1-min TTL) — reduces redundant API calls
+- **`loading="lazy"`** on all images (already in v3.1, kept)
+- **Critical CSS path**: `main.css` uses `@import` so browser can prefetch modular files in parallel
+- **Reduced DOM manipulation**: Cart module reuses DOM nodes instead of re-rendering
+
+### 🛠 Debug Results Verification
+Based on your debug output, all systems are green:
+- ✅ Worker: ok (3.1.0)
+- ✅ Database: ok (10 tables, 47ms response)
+- ✅ Schema: v11, synced
+- ✅ GitHub: ok (write_access: true, delete_access: true)
+- ✅ Auth: ok (JWT verified, admin exists)
+- ✅ Storage: ok (uploads folder exists, can_write: true)
+- ✅ Upload: ok (test file uploaded in 1209ms, returned GitHub URL)
+- ✅ Performance: ok (D1: 35ms, GitHub ping: 232ms)
+
+**No backend changes needed** — v4.0 is purely a frontend refactor. The worker code from v3.1 is unchanged.
 
 ## 📁 Structure
 
 ```
-pixoris-v3/
+pixoris-v4/
 ├── README.md
 ├── MIGRATION.md
-├── worker/
-│   ├── migrations/             ← 11 migration files (001-011)
-│   │   ├── 001_add_sort_order.sql
-│   │   ├── 002_add_products.sql
-│   │   ├── 003_expand_categories.sql
-│   │   ├── 004_expand_posts.sql
-│   │   ├── 005_user_roles.sql
-│   │   ├── 006_audit_logs.sql
-│   │   ├── 007_expand_media.sql
-│   │   ├── 008_expand_products.sql
-│   │   ├── 009_add_indexes.sql
-│   │   ├── 010_settings.sql
-│   │   └── 011_v3_recovery.sql  ← NEW: idempotent recovery migration
+├── worker/                    ← UNCHANGED from v3.1
+│   ├── migrations/
 │   ├── schema.sql
 │   ├── wrangler.toml
-│   ├── package.json
-│   ├── run-migrations.sh        ← NEW: bash script to run all migrations
+│   ├── run-migrations.sh
 │   └── src/
-│       ├── index.js             ← v3 (with timing + debug + fallbacks)
+│       ├── index.js
 │       ├── router.js
-│       └── debug.js             ← NEW: diagnostic module
+│       ├── debug.js
+│       ├── services/ (github.js, storage.js)
+│       ├── utils/ (response.js, logger.js)
+│       └── middleware/ (auth.js, rateLimit.js)
 │
-└── page/
-    ├── index.html, news.html, shop.html, product.html, article.html
-    ├── analysis.html, about.html, cart.html, login.html
-    ├── admin.html               ← CMS dashboard (8 tabs)
-    ├── debug.html               ← NEW: visual debug dashboard
-    ├── 404.html
-    ├── script.js                ← v3 (toman exposed on window)
-    ├── admin.js                 ← v3 (no toman duplicate)
-    ├── styles.css
-    ├── robots.txt, sitemap.xml
-    └── assets/
+└── page/                      ← FULLY REFACTORED
+    ├── *.html (12 files, all updated with new paths)
+    ├── css/                   ← NEW modular CSS
+    │   ├── main.css           (entry — imports all)
+    │   ├── tokens.css
+    │   ├── base.css
+    │   ├── layout.css
+    │   ├── topbar.css
+    │   ├── components.css
+    │   ├── content.css
+    │   ├── decor.css
+    │   ├── misc.css
+    │   └── admin.css
+    ├── js/                    ← NEW modular JS (ES modules)
+    │   ├── script.js          (frontend entry)
+    │   ├── admin.js           (admin entry)
+    │   └── modules/
+    │       ├── utils.js
+    │       ├── api.js
+    │       ├── toast.js
+    │       ├── seo.js
+    │       ├── cart.js
+    │       ├── ui.js
+    │       ├── content.js
+    │       └── fallback.js
+    ├── assets/                ← RESTRUCTURED
+    │   ├── decor/             (14 PNGs)
+    │   ├── svg/               (6 SVGs)
+    │   ├── logos/             (2 logos + favicon.svg NEW)
+    │   ├── audio/             (1 mp3)
+    │   └── uploads/           (5 empty folders ready)
+    ├── robots.txt
+    └── sitemap.xml
 ```
 
-## 🚀 Quick Deployment
+## 🚀 Deployment
 
-### Fresh install (new database)
+### Frontend (Cloudflare Pages)
+1. Extract `pixoris-v4.zip`
+2. Upload everything in `page/` to your `Pixoris` GitHub repo (replaces existing files)
+3. Cloudflare Pages auto-deploys
+4. Visit `https://pixoris.pages.dev` — verify favicon shows in browser tab
 
-```bash
-cd worker
-./run-migrations.sh              # remote
-# OR
-./run-migrations.sh --local      # for local dev
+### Backend (Worker)
+**No changes needed.** The worker from v3.1 is fully compatible.
+
+## ✅ Verification Checklist
+
+After deploying v4.0:
+
+- [ ] Visit `https://pixoris.pages.dev` — Pac-Man favicon appears in browser tab
+- [ ] Homepage loads with featured posts, latest posts, shop preview, trending
+- [ ] News page loads with pagination
+- [ ] Shop page loads with products from API
+- [ ] Product detail page works (`?slug=`)
+- [ ] Article page works (`?slug=`)
+- [ ] Admin login works (no `toman` error in console)
+- [ ] Admin dashboard shows 8 stat cards
+- [ ] Admin Debug Center tab works (all checks green)
+- [ ] Media upload works
+- [ ] Cart works (add/remove/checkout display)
+- [ ] Pac Mode toggle works
+- [ ] Music toggle works
+- [ ] Mobile menu works
+- [ ] No 404 errors in browser DevTools Network tab
+
+## 🎨 Design System
+
+### Colors (CSS variables in `tokens.css`)
+```css
+--bg: #070b16          --cyan: #4ee5ff
+--bg-soft: #0d1222     --purple: #9264ff
+--card: rgba(17,23,40,.88)  --pink: #ff4e9c
+--text: #f5f7ff        --yellow: #ffd84c
+--text-muted: #9aa5c7  --green: #39f37a
 ```
 
-### Upgrading from v2.2 (already deployed)
+### Typography
+- Main font: Tahoma, Vazirmatn, Arial
+- Pixel font: Courier New (for Pac Mode)
+- Mono font: SFMono-Regular, Consolas (for code blocks)
 
-Your schema is already at v10. Just:
-1. Deploy the new worker: `wrangler deploy`
-2. Upload the new `page/` files to GitHub (Cloudflare Pages auto-deploys)
-3. Verify with: `curl https://dev.pixoris.workers.dev/api/debug`
+### Spacing Scale
+`--space-1` (4px) → `--space-12` (48px) — consistent vertical rhythm
 
-### Upgrading from v2.0/v2.1 (legacy DB)
+### Radius Scale
+`--radius-xs` (6px) → `--radius-full` (999px)
 
-Run all migrations in order:
-```bash
-cd worker
-./run-migrations.sh
-```
+## 🔧 Development Notes
 
-If some migrations fail (column already exists), that's OK — they're idempotent. Then verify:
-```bash
-curl https://dev.pixoris.workers.dev/api/debug/schema
-```
+### Adding a new CSS rule
+1. Identify which module it belongs to (e.g., new card variant → `components.css`)
+2. Add the rule using tokens (`var(--space-4)`, `var(--cyan)`, etc.)
+3. No need to touch `main.css` — it auto-imports all modules
 
-Should return all 10 tables as `true` and `migration_version: 11`.
+### Adding a new JS module
+1. Create `js/modules/your-module.js`
+2. Export functions: `export const myFunc = () => {...}`
+3. Import where needed: `import { myFunc } from './modules/your-module.js'`
+4. HTML must use `<script type="module">` (already set up)
 
-## 🔐 Required Secrets
+### Adding a new admin tab
+1. Add `<a data-admin-tab="your-tab">` in `admin.html` sidebar
+2. Add `<div class="admin-tab" data-tab="your-tab">` content section
+3. Add `if (target === 'your-tab') initYourTab();` in `admin.js` `initTabs()`
+4. Implement `initYourTab()` function
 
-```bash
-wrangler secret put JWT_SECRET          # REQUIRED — random 32+ chars
-wrangler secret put GITHUB_TOKEN         # REQUIRED — GitHub PAT with repo:write
-wrangler secret put GITHUB_REPO          # e.g. ILIV007/Pixoris
-wrangler secret put GITHUB_BRANCH        # e.g. main
-```
+## 📊 Performance Metrics (from your debug output)
 
-## 🧪 Verification Checklist
+| Metric | Value | Status |
+|--------|-------|--------|
+| D1 query time | 35-70ms | ✅ Excellent |
+| GitHub API ping | 232ms | ✅ Good |
+| Upload test | 1209ms | ✅ Good (includes commit) |
+| Total debug response | 267ms | ✅ Fast |
+| Worker baseline | 1ms | ✅ Minimal overhead |
 
-After deployment, run these checks:
-
-### 1. Quick health check
-```bash
-curl https://dev.pixoris.workers.dev/api/debug
-```
-Expected: `{"worker":"ok","database":"ok","schema":"v11","github":"configured","auth":"configured","version":"3.0.0"}`
-
-### 2. Full diagnostic
-```bash
-curl https://dev.pixoris.workers.dev/api/debug/full | jq
-```
-
-### 3. Schema verification
-```bash
-curl https://dev.pixoris.workers.dev/api/debug/schema | jq
-```
-All 10 tables should be `true`:
-- admins, categories, posts, tags, post_tags, media, products, settings, audit_logs, schema_migrations
-
-### 4. CMS CRUD round-trip test
-```bash
-curl https://dev.pixoris.workers.dev/api/debug/cms | jq
-```
-Should return `{"create":true,"read":true,"update":true,"delete":true,"status":"ok"}`
-
-### 5. GitHub upload test
-```bash
-curl https://dev.pixoris.workers.dev/api/debug/upload | jq
-```
-Should return `{"status":"ok","url":"https://raw.githubusercontent.com/...","path":"assets/uploads/debug/test-*.txt"}`
-
-### 6. Visual debug dashboard
-Visit `https://pixoris.pages.dev/debug.html` — runs all checks in the browser.
-
-### 7. Admin login test
-1. Visit `https://pixoris.pages.dev/admin.html`
-2. Login: `admin` / `pixoris2026`
-3. Should NOT see "Identifier 'toman' has already been declared" error
-4. Should land on the dashboard
-
-## 📊 API Endpoints
-
-### Public (with caching + timing headers)
-- `GET /api/health` — 60s cache
-- `GET /api/posts?page=1&limit=12&category=&q=` — 60s cache, paginated
-- `GET /api/post/:slug` — 120s cache
-- `GET /api/categories?with_counts=1` — 300s cache
-- `GET /api/category/:slug` — 300s cache
-- `GET /api/featured?limit=6` — 120s cache
-- `GET /api/trending` — 300s cache
-- `GET /api/search?q=&type=posts|products|all` — 30s cache
-- `GET /api/tags` — 300s cache
-- `GET /api/products?category=` — 300s cache
-- `GET /api/product/:slug` — 120s cache
-- `GET /api/sitemap` — 600s cache
-- `GET /api/settings` — 600s cache
-
-### Admin (JWT required, no cache)
-- `POST /api/admin/login`
-- `GET /api/admin/me`
-- `GET /api/admin/stats`
-- `GET/POST/PUT/DELETE /api/admin/post[s]/...`
-- `GET/POST/PUT/DELETE /api/admin/categor[y|ies]/...`
-- `GET/POST/PUT/DELETE /api/admin/product[s]/...`
-- `GET/POST/PUT/DELETE /api/admin/media/...`
-- `GET/POST/PUT/DELETE /api/admin/user[s]/...` (super_admin only)
-- `GET /api/admin/audit-logs` (admin+)
-- `GET/PUT /api/admin/settings` (admin+)
-
-### Debug (no auth, no cache)
-- `GET /api/debug`
-- `GET /api/debug/full`
-- `GET /api/debug/{worker,database,schema,categories,posts,settings,auth,github,upload,storage,cms,performance}`
-
-## 🆕 What's New in v3.0 (vs v2.2)
-
-| Area | v2.2 | v3.0 |
-|------|------|------|
-| `toman` duplicate bug | ❌ Broke admin.js | ✅ Fixed |
-| Missing `is_active` column | ❌ Crashed `/api/categories` | ✅ Graceful fallback |
-| Missing `settings` table | ❌ Crashed `/api/settings` | ✅ Returns warning + empty |
-| Missing `products` table | ❌ Crashed `/api/products` | ✅ Returns warning + empty |
-| Diagnostic endpoints | ❌ None | ✅ 12 endpoints + UI |
-| Response timing | ❌ Not exposed | ✅ `X-Response-Time` + `Server-Timing` |
-| Public endpoint caching | ❌ No cache headers | ✅ Tiered (60s-600s) |
-| Unhandled errors | ❌ Bare 500 | ✅ JSON-formatted 500 |
-| Migration recovery | ❌ Manual fix needed | ✅ `011_v3_recovery.sql` |
-
-## 🔧 Local Development
-
-```bash
-# Worker
-cd worker
-wrangler dev
-
-# Pages (any static server)
-cd page
-npx serve .
-```
-
-## 📝 Default Credentials
-
-- **Username**: `admin`
-- **Password**: `pixoris2026` (auto-migrated to PBKDF2 on first login)
-
-⚠️ Change after first login by creating a new super_admin and deleting the default.
+All performance metrics are healthy. No optimization needed.
 
 ---
 
-**Built by Super Z for Pixoris** · v3.0.0 · 2026
+**Built by Super Z for Pixoris** · v4.0.0 · 2026
